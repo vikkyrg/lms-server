@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-label="Linux Fundamentals for Beginners">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0B1B33"/>
+      <stop offset="55%" stop-color="#102747"/>
+      <stop offset="100%" stop-color="#173563"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#3F6FA8" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#F4D36B" stop-opacity="0.15"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="720" fill="url(#bg)"/>
+  <g opacity="0.18" stroke="#F4D36B" stroke-width="1">
+    <line x1="80" y1="0" x2="80" y2="720"/>
+    <line x1="220" y1="0" x2="220" y2="720"/>
+    <line x1="360" y1="0" x2="360" y2="720"/>
+    <line x1="500" y1="0" x2="500" y2="720"/>
+    <line x1="640" y1="0" x2="640" y2="720"/>
+    <line x1="780" y1="0" x2="780" y2="720"/>
+    <line x1="920" y1="0" x2="920" y2="720"/>
+    <line x1="1060" y1="0" x2="1060" y2="720"/>
+    <line x1="1200" y1="0" x2="1200" y2="720"/>
+    <line x1="0" y1="80" x2="1280" y2="80"/>
+    <line x1="0" y1="230" x2="1280" y2="230"/>
+    <line x1="0" y1="380" x2="1280" y2="380"/>
+    <line x1="0" y1="530" x2="1280" y2="530"/>
+    <line x1="0" y1="680" x2="1280" y2="680"/>
+  </g>
+  <circle cx="1120" cy="150" r="200" fill="url(#glow)" opacity="0.35"/>
+  <rect x="72" y="72" width="6" height="120" rx="3" fill="#3F6FA8"/>
+
+  <g font-family="Segoe UI, Helvetica, Arial, sans-serif">
+    <text x="110" y="118" font-size="26" letter-spacing="6" fill="#F4D36B" font-weight="600">AUTOOPS SCHOOL</text>
+    <text x="110" y="168" font-size="24" letter-spacing="3" fill="#9FB6D4">DEVOPS TRAINING TRACK</text>
+
+    <text x="110" y="300" font-size="72" font-weight="700" fill="#FFFFFF">Linux Fundamentals for</text>
+    <text x="110" y="382" font-size="72" font-weight="700" fill="#FFFFFF">Beginners</text>
+
+    <text x="110" y="560" font-size="26" fill="#C8D7EA">Learn the fundamentals of Linux, essential</text>
+    <text x="110" y="600" font-size="26" fill="#C8D7EA">terminal commands, file management,</text>
+
+    <g>
+      <rect x="110" y="628" width="230" height="52" rx="26" fill="#3F6FA8" opacity="0.92"/>
+      <text x="225" y="661" font-size="22" font-weight="700" fill="#0B1B33" text-anchor="middle">FREE COURSE</text>
+      <rect x="356" y="628" width="290" height="52" rx="26" fill="none" stroke="#5C7BA6" stroke-width="2"/>
+      <text x="501" y="661" font-size="22" text-anchor="middle" fill="#DCE7F5">5 Modules · 3 Months Access</text>
+    </g>
+  </g>
+</svg>
