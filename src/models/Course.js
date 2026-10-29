@@ -25,7 +25,12 @@ const courseSchema = new mongoose.Schema({
   },
   thumbnail: {
     type: String,
-    default: 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=800&auto=format&fit=crop&q=60'
+    default: ''
+  },
+  thumbnailImage: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'CourseImage',
+    required: false
   },
   previewVideo: {
     type: String,

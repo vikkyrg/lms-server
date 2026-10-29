@@ -857,8 +857,327 @@ async function runTests() {
   assert.strictEqual(expiredQuizList.status, 403, 'Expired access locks protected learning content');
   console.log('✓ Quiz access follows the same approved + 3-month window rule');
 
-  // 31. Isolation: nothing above touched the production database
-  console.log('Test 31: Test run stayed on the isolated database');
+  // =====================================================================
+  // COMPLETE QUIZ + ASSIGNMENT / PROJECT WORKFLOW (sections 2-9 of the
+  // feature brief). Dedicated course & student so nothing interferes with
+  // the earlier access-expiry mutations above.
+  // =====================================================================
+  console.log('Test 31: Workflow course + module + approved student setup');
+  const wfCourseRes = await call('POST', '/api/v1/courses', adminToken, {
+    title: 'Quiz & Assignment Workflow Course',
+    shortDescription: 'End-to-end quiz and assignment testing',
+    category: devopsCategoryId,
+    duration: '3 Months Course Access',
+    isFree: true,
+    price: 0,
+    status: 'published'
+  });
+  assert.strictEqual(wfCourseRes.status, 201, 'Workflow course created');
+  const wfCourseId = wfCourseRes.body.course._id;
+  const wfModuleRes = await call('POST', '/api/v1/curriculum/modules', adminToken, {
+    courseId: wfCourseId, title: 'WF Module 1', order: 1
+  });
+  const wfModuleId = wfModuleRes.body.module._id;
+  const wfLessonRes = await call('POST', '/api/v1/curriculum/lessons', adminToken, {
+    courseId: wfCourseId, moduleId: wfModuleId, title: 'WF Lesson 1', duration: 8, order: 1
+  });
+  const wfLessonId = wfLessonRes.body.lesson._id;
+
+  const wfStudentReg = await call('POST', '/api/v1/auth/register', '', {
+    name: 'Workflow Student', email: 'test.workflow@lms.com', password: 'workflowPass123'
+  });
+  const wfToken = wfStudentReg.body.token;
+  const wfEnrollRes = await call('POST', '/api/v1/enrollments/free', wfToken, { courseId: wfCourseId });
+  const wfEnrollId = wfEnrollRes.body.enrollment._id;
+  const wfApprove = await call('PUT', `/api/v1/enrollments/admin/${wfEnrollId}/approve`, adminToken);
+  assert.strictEqual(wfApprove.status, 200, 'Workflow student approved');
+
+  const otherStudentReg = await call('POST', '/api/v1/auth/register', '', {
+    name: 'Other Workflow Student', email: 'test.workflow2@lms.com', password: 'workflowPass123'
+  });
+  const otherToken = otherStudentReg.body.token;
+  const otherEnrollRes = await call('POST', '/api/v1/enrollments/free', otherToken, { courseId: wfCourseId });
+  await call('PUT', `/api/v1/enrollments/admin/${otherEnrollRes.body.enrollment._id}/approve`, adminToken);
+  console.log('✓ Workflow setup complete');
+
+  // 32. Admin quiz builder: draft, publish validation, then publish
+  console.log('Test 32: Admin quiz builder validation & publishing');
+  const draftQuizRes = await call('POST', '/api/v1/quizzes/admin/quizzes', adminToken, {
+    title: 'Builder Draft Quiz',
+    courseId: wfCourseId,
+    moduleId: wfModuleId,
+    feedbackMode: 'immediate',
+    maxAttempts: 1,
+    passingPercentage: 50,
+    timeLimitMinutes: 15,
+    published: false,
+    questions: []
+  });
+  assert.strictEqual(draftQuizRes.status, 201, 'Draft quiz (no questions) saves');
+  const practiceQuizId = draftQuizRes.body.quiz._id;
+
+  const earlyPublish = await call('PATCH', `/api/v1/quizzes/admin/quizzes/${practiceQuizId}/publish`, adminToken);
+  assert.strictEqual(earlyPublish.status, 400, 'Publish is blocked with zero questions');
+
+  const fillQuizRes = await call('PUT', `/api/v1/quizzes/admin/quizzes/${practiceQuizId}`, adminToken, {
+    questions: [
+      { questionText: 'What does git clone do?', questionType: 'multiple-choice', options: ['Copies a repo', 'Deletes a repo', 'Renames a branch', 'Pushes commits'], correctAnswer: 0, explanation: 'It creates a local copy of a remote repo.', points: 1 },
+      { questionText: 'Which are CI tools?', questionType: 'multiple-select', options: ['Jenkins', 'Git', 'CircleCI', 'Docker'], correctAnswer: [0, 2], explanation: 'Jenkins and CircleCI are CI servers.', points: 1 }
+    ]
+  });
+  assert.strictEqual(fillQuizRes.status, 200, 'Questions saved to the draft');
+  const publishRes = await call('PATCH', `/api/v1/quizzes/admin/quizzes/${practiceQuizId}/publish`, adminToken);
+  assert.strictEqual(publishRes.status, 200, 'Validated quiz publishes');
+
+  const adminQuizFetch = await call('GET', `/api/v1/quizzes/admin/quizzes/${practiceQuizId}`, adminToken);
+  assert(adminQuizFetch.body.quiz.questions[0].correctAnswer !== undefined, 'Admin editing view keeps correct answers');
+  console.log('✓ Quiz builder draft -> validate -> publish works');
+
+  // 33. Practice mode: answers hidden during taking, per-question check reveals
+  console.log('Test 33: Practice mode attempt, backend scoring & result reveal');
+  const practiceListRes = await call('GET', `/api/v1/quizzes/course/${wfCourseId}/my`, wfToken);
+  assert.strictEqual(practiceListRes.status, 200);
+  const practiceCard = practiceListRes.body.quizzes.find((q) => q._id === practiceQuizId);
+  assert.strictEqual(practiceCard.questions[0].correctAnswer, undefined, 'List never exposes correct answers');
+  assert.strictEqual(practiceCard.stats.canStart, true, 'Fresh student can start');
+
+  const practiceStart = await call('POST', `/api/v1/quizzes/${practiceQuizId}/start`, wfToken);
+  assert.strictEqual(practiceStart.status, 200, 'Attempt started');
+  const practiceAttemptId = practiceStart.body.attempt._id;
+  assert.strictEqual(practiceStart.body.quiz.questions[0].correctAnswer, undefined, 'Start payload keeps answers hidden');
+
+  // Wrong first, then a correct practice-mode check
+  const wrongCheck = await call('POST', `/api/v1/quizzes/${practiceQuizId}/attempt/${practiceAttemptId}/check`, wfToken, { questionIndex: 0, answer: 3 });
+  assert.strictEqual(wrongCheck.status, 200);
+  assert.strictEqual(wrongCheck.body.isCorrect, false, 'Practice check reports incorrect');
+  const rightCheck = await call('POST', `/api/v1/quizzes/${practiceQuizId}/attempt/${practiceAttemptId}/check`, wfToken, { questionIndex: 0, answer: 0 });
+  assert.strictEqual(rightCheck.body.isCorrect, true, 'Practice check reports correct');
+  assert(Array.isArray(rightCheck.body.correctAnswerTexts), 'Practice check reveals the correct answer');
+
+  await call('PUT', `/api/v1/quizzes/${practiceQuizId}/attempt/${practiceAttemptId}/answer`, wfToken, { questionIndex: 0, answer: 0 });
+  await call('PUT', `/api/v1/quizzes/${practiceQuizId}/attempt/${practiceAttemptId}/answer`, wfToken, { questionIndex: 1, answer: [0, 1] }); // partial -> wrong
+  const practiceSubmit = await call('POST', `/api/v1/quizzes/${practiceQuizId}/attempt/${practiceAttemptId}/submit`, wfToken, {
+    answers: [{ questionIndex: 0, answer: 0 }, { questionIndex: 1, answer: [0, 1] }]
+  });
+  assert.strictEqual(practiceSubmit.status, 200, 'Quiz submits and scores on the backend');
+  assert.strictEqual(practiceSubmit.body.result.totalScore, 2, 'Total marks computed server-side');
+  assert.strictEqual(practiceSubmit.body.result.score, 1, 'Only the fully-correct multi-select scores');
+  assert.strictEqual(practiceSubmit.body.result.passed, true, '50% meets the 50% pass mark');
+
+  // Duplicate submission guard
+  const dupSubmit = await call('POST', `/api/v1/quizzes/${practiceQuizId}/attempt/${practiceAttemptId}/submit`, wfToken, { answers: [] });
+  assert.strictEqual(dupSubmit.status, 409, 'Duplicate submission blocked');
+  assert.strictEqual(dupSubmit.body.code, 'ALREADY_SUBMITTED');
+
+  // Attempt limit enforced
+  const overLimitStart = await call('POST', `/api/v1/quizzes/${practiceQuizId}/start`, wfToken);
+  assert.strictEqual(overLimitStart.status, 400, 'maxAttempts respected after the single attempt is used');
+
+  const practiceResult = await call('GET', `/api/v1/quizzes/${practiceQuizId}/attempt/${practiceAttemptId}/result`, wfToken);
+  assert.strictEqual(practiceResult.status, 200, 'Result page loads on refresh');
+  assert.strictEqual(practiceResult.body.attemptsLeft, 0, 'No attempts remaining reported');
+  const q2Review = practiceResult.body.result.review.find((r) => r.questionIndex === 1);
+  assert.strictEqual(q2Review.isCorrect, false, 'Partial multi-select marked incorrect');
+  assert(Array.isArray(q2Review.correctAnswerTexts), 'Result reveals correct answers after submission');
+
+  // Opening the quiz did NOT mark the lesson complete (progress rule)
+  const wfEnrollmentDoc = await Enrollment.findById(wfEnrollId).lean();
+  assert(!wfEnrollmentDoc.completedLessons.map(String).includes(String(wfLessonId)), 'Quiz attempt must not auto-complete a lesson');
+  console.log('✓ Practice mode: hidden answers, backend scoring, attempt limit, duplicate guard');
+
+  // 34. Assessment mode: per-question check blocked until submission
+  console.log('Test 34: Assessment mode hides feedback until final submit');
+  const assessCreate = await call('POST', '/api/v1/quizzes/admin/quizzes', adminToken, {
+    title: 'Assessment Mode Quiz',
+    courseId: wfCourseId,
+    feedbackMode: 'deferred',
+    maxAttempts: 0,
+    passingPercentage: 100,
+    published: true,
+    questions: [
+      { questionText: 'Kubernetes manages containers.', questionType: 'true-false', options: ['True', 'False'], correctAnswer: 0, explanation: 'K8s orchestrates containers.', points: 1 }
+    ]
+  });
+  assert.strictEqual(assessCreate.status, 201, 'Assessment quiz created & published');
+  const assessQuizId = assessCreate.body.quiz._id;
+  const assessStart = await call('POST', `/api/v1/quizzes/${assessQuizId}/start`, wfToken);
+  const assessAttemptId = assessStart.body.attempt._id;
+  const assessCheck = await call('POST', `/api/v1/quizzes/${assessQuizId}/attempt/${assessAttemptId}/check`, wfToken, { questionIndex: 0, answer: 0 });
+  assert.strictEqual(assessCheck.status, 403, 'Assessment mode refuses pre-submit answer checks');
+  const assessSubmit = await call('POST', `/api/v1/quizzes/${assessQuizId}/attempt/${assessAttemptId}/submit`, wfToken, { answers: [{ questionIndex: 0, answer: 0 }] });
+  assert.strictEqual(assessSubmit.status, 200);
+  assert.strictEqual(assessSubmit.body.result.percentage, 100, 'Correct true/false scores full marks');
+  const assessReview = assessSubmit.body.result.review[0];
+  assert(Array.isArray(assessReview.correctAnswerTexts), 'Assessment reveals correct answers only after submit');
+  console.log('✓ Assessment mode feedback stays locked until submission');
+
+  // 35. Assignment builder (multipart) with reference PDF + all submission types
+  console.log('Test 35: Admin assignment builder with reference file & multiple types');
+  const futureDue = new Date(Date.now() + 30 * 86400000).toISOString();
+  const assignCreate = await makeMultipartRequest('POST', '/api/v1/assignments/admin', `Bearer ${adminToken}`, {
+    title: 'Build a Dockerized Web App',
+    description: 'Containerise a small web app.',
+    instructions: 'Write a Dockerfile and push the image.',
+    courseId: wfCourseId,
+    moduleId: wfModuleId,
+    lessonId: wfLessonId,
+    isProject: 'true',
+    learningObjectives: JSON.stringify(['Containerise an app', 'Publish an image']),
+    submissionTypes: JSON.stringify(['text', 'file', 'github']),
+    allowedFileTypes: JSON.stringify(['.pdf', '.zip']),
+    maxFileSizeMb: '25',
+    dueDate: futureDue,
+    totalMarks: '100',
+    passingMarks: '40',
+    rubric: 'Dockerfile quality + running image',
+    allowLateSubmission: 'true',
+    allowResubmission: 'before-grading',
+    published: 'true'
+  }, {
+    field: 'referenceFile',
+    name: 'project-brief.pdf',
+    mime: 'application/pdf',
+    data: buildSamplePdf('Dockerized Web App Brief')
+  });
+  assert.strictEqual(assignCreate.status, 201, 'Assignment created via multipart admin API');
+  const assignmentId = assignCreate.body.assignment._id;
+  assert.strictEqual(assignCreate.body.assignment.published, true);
+  const referenceUrl = assignCreate.body.assignment.referenceFile?.fileUrl;
+  assert(referenceUrl, 'Reference file is attached');
+  uploadedFiles.push(referenceUrl);
+  console.log('✓ Assignment builder persists project fields + reference file');
+
+  // 36. Student assignment access, draft, submit, file type enforcement
+  console.log('Test 36: Student submission workflow, drafts, files & validation');
+  const wfAssignList = await call('GET', `/api/v1/assignments/course/${wfCourseId}/my`, wfToken);
+  assert.strictEqual(wfAssignList.status, 200);
+  const wfAssignCard = wfAssignList.body.assignments.find((a) => a._id === assignmentId);
+  assert.strictEqual(wfAssignCard.mySubmission.displayStatus, 'not-submitted', 'Fresh state shows Not Started');
+
+  // Drafts and URL/text submissions travel as plain JSON (express.json is global
+  // and multer's .single() passes non-multipart bodies straight through).
+  const draftSave = await call('POST', `/api/v1/assignments/${assignmentId}/draft`, wfToken, {
+    submissionType: 'text', submissionText: 'My draft notes'
+  });
+  assert.strictEqual(draftSave.status, 200, 'Text draft saves');
+  assert.strictEqual(draftSave.body.summary.displayStatus, 'draft', 'Draft state reflected in the student summary');
+
+  // Invalid file type is rejected by the per-assignment multer filter
+  const badFile = await makeMultipartRequest('POST', `/api/v1/assignments/${assignmentId}/submit`, `Bearer ${wfToken}`, {
+    submissionType: 'file', hasExistingFile: 'false'
+  }, { field: 'file', name: 'notes.txt', mime: 'text/plain', data: Buffer.from('not allowed') });
+  assert.strictEqual(badFile.status, 400, 'Disallowed file type is rejected before saving');
+
+  // GitHub submission with an invalid URL is rejected
+  const badGithub = await call('POST', `/api/v1/assignments/${assignmentId}/submit`, wfToken, {
+    submissionType: 'github', githubUrl: 'https://not-github.example.com/x'
+  });
+  assert.strictEqual(badGithub.status, 400, 'Invalid GitHub URL is rejected');
+
+  // Valid GitHub submission (promotes the draft to a real submission)
+  const ghSubmit = await call('POST', `/api/v1/assignments/${assignmentId}/submit`, wfToken, {
+    submissionType: 'github', githubUrl: 'https://github.com/example/docker-app'
+  });
+  assert.strictEqual(ghSubmit.status, 200, 'GitHub submission accepted');
+  const submissionId = ghSubmit.body.submission._id;
+  assert.strictEqual(ghSubmit.body.submission.status, 'submitted');
+
+  // Valid file submission (allowed .pdf) as a resubmission before grading
+  const fileSubmit = await makeMultipartRequest('POST', `/api/v1/assignments/${assignmentId}/submit`, `Bearer ${wfToken}`, {
+    submissionType: 'file', hasExistingFile: 'false'
+  }, { field: 'file', name: 'submission.pdf', mime: 'application/pdf', data: buildSamplePdf('Student Docker Project') });
+  assert.strictEqual(fileSubmit.status, 200, 'Allowed file submission accepted');
+  assert.strictEqual(fileSubmit.body.submission.submissionNumber, 3, 'Draft -> github -> file each bump the attempt number');
+  const submittedFileId = fileSubmit.body.submission._id;
+  uploadedFiles.push(fileSubmit.body.submission.fileUrl);
+
+  // Student downloads their own submission file
+  const ownDownload = await call('GET', `/api/v1/assignments/submissions/${submittedFileId}/download`, wfToken);
+  assert.strictEqual(ownDownload.status, 200, 'Student can download their own file');
+  // Another enrolled student cannot read it
+  const foreignDownload = await call('GET', `/api/v1/assignments/submissions/${submittedFileId}/download`, otherToken);
+  assert.strictEqual(foreignDownload.status, 403, 'Submission files are owner/manager only');
+  console.log('✓ Submission workflow, file rules & ownership isolation verified');
+
+  // 37. Admin grading: review -> return for revision -> resubmit -> grade
+  console.log('Test 37: Grading lifecycle (review, return, resubmit, grade)');
+  const allSubs = await call('GET', `/api/v1/assignments/submissions/all?courseId=${wfCourseId}&status=all`, adminToken);
+  assert.strictEqual(allSubs.status, 200);
+  const adminSeen = allSubs.body.submissions.find((s) => s._id === submittedFileId);
+  assert(adminSeen, 'Admin grading list includes the submission');
+  assert.strictEqual(adminSeen.studentId?.name, 'Workflow Student', 'Student populated for grading');
+
+  const toReview = await call('PUT', `/api/v1/assignments/submissions/${submittedFileId}/grade`, adminToken, { action: 'review' });
+  assert.strictEqual(toReview.status, 200);
+  assert.strictEqual(toReview.body.submission.status, 'under_review', 'Opening flips to Under Review');
+
+  const returned = await call('PUT', `/api/v1/assignments/submissions/${submittedFileId}/grade`, adminToken, { action: 'return', feedback: 'Add a README and pin your base image.' });
+  assert.strictEqual(returned.status, 200);
+  assert.strictEqual(returned.body.submission.status, 'returned_for_revision', 'Returned for revision');
+
+  // Student resubmits after revision (allowed by before-grading policy)
+  const resubmit = await call('POST', `/api/v1/assignments/${assignmentId}/submit`, wfToken, {
+    submissionType: 'github', githubUrl: 'https://github.com/example/docker-app-v2'
+  });
+  assert.strictEqual(resubmit.status, 200, 'Resubmission after revision is permitted');
+  assert.strictEqual(resubmit.body.submission.status, 'submitted');
+
+  const graded = await call('PUT', `/api/v1/assignments/submissions/${submittedFileId}/grade`, adminToken, { action: 'grade', marksObtained: 85, feedback: 'Solid work.' });
+  assert.strictEqual(graded.status, 200);
+  assert.strictEqual(graded.body.submission.status, 'graded');
+  assert.strictEqual(graded.body.submission.marksObtained, 85, 'Marks stored server-side by an authorized grader');
+  assert(graded.body.submission.gradingHistory.length >= 2, 'Grading history tracks review/return/grade events');
+
+  const studentView = await call('GET', `/api/v1/assignments/${assignmentId}/my-submission`, wfToken);
+  assert.strictEqual(studentView.body.submission.marksObtained, 85, 'Student sees their grade + feedback');
+  assert.strictEqual(studentView.body.summary.displayStatus, 'graded');
+  assert.strictEqual(studentView.body.summary.passed, true, 'Pass/fail derived from assignment passing marks');
+
+  // After grading, resubmission is closed (before-grading policy)
+  const afterGradeSubmit = await call('POST', `/api/v1/assignments/${assignmentId}/submit`, wfToken, {
+    submissionType: 'github', githubUrl: 'https://github.com/example/three'
+  });
+  assert.strictEqual(afterGradeSubmit.status, 400, 'Graded submission cannot be resubmitted');
+  console.log('✓ Full grading lifecycle, resubmission rules & feedback exposure verified');
+
+  // 38. Enrollment + expiry enforcement on assignment access
+  console.log('Test 38: Unapproved / expired students are locked out of assignments');
+  const pendingAssignStudent = await call('POST', '/api/v1/auth/register', '', {
+    name: 'Pending Assign Student', email: 'test.pendingassign@lms.com', password: 'pendingPass123'
+  });
+  const pendingAssignToken = pendingAssignStudent.body.token;
+  await call('POST', '/api/v1/enrollments/free', pendingAssignToken, { courseId: wfCourseId });
+  const pendingAssignList = await call('GET', `/api/v1/assignments/course/${wfCourseId}/my`, pendingAssignToken);
+  assert.strictEqual(pendingAssignList.status, 403, 'Pending student cannot list assignments');
+  const pendingAssignSubmit = await call('POST', `/api/v1/assignments/${assignmentId}/submit`, pendingAssignToken, {
+    submissionType: 'text', submissionText: 'should fail'
+  });
+  assert.strictEqual(pendingAssignSubmit.status, 403, 'Pending student cannot submit assignments');
+
+  // Expire the workflow student's access and confirm lockout
+  await Enrollment.findByIdAndUpdate(wfEnrollId, {
+    accessStartDate: new Date(Date.now() - 200 * 86400000),
+    accessExpiryDate: new Date(Date.now() - 1 * 86400000),
+    status: 'expired'
+  });
+  const expiredAssignList = await call('GET', `/api/v1/assignments/course/${wfCourseId}/my`, wfToken);
+  assert.strictEqual(expiredAssignList.status, 403, 'Expired access locks assignments');
+  const expiredQuizMy = await call('GET', `/api/v1/quizzes/course/${wfCourseId}/my`, wfToken);
+  assert.strictEqual(expiredQuizMy.status, 403, 'Expired access locks the quiz list');
+  console.log('✓ Enrollment approval + expiry enforced server-side for quizzes & assignments');
+
+  // 39. Audit logging reused for quiz & assignment lifecycle
+  console.log('Test 39: Audit log coverage for the new workflows');
+  const wfAudit = await call('GET', '/api/v1/admin/audit-logs?limit=200', adminToken);
+  assert.strictEqual(wfAudit.status, 200);
+  const auditActions = wfAudit.body.logs.map((l) => l.action);
+  assert(auditActions.includes('QUIZ_ATTEMPT_SUBMITTED'), 'Quiz submissions are audited');
+  assert(auditActions.includes('ASSIGNMENT_SUBMITTED'), 'Assignment submissions are audited');
+  assert(auditActions.includes('SUBMISSION_GRADED'), 'Grading events are audited');
+  console.log('✓ Existing audit logging reused');
+
+  // 40. Isolation: nothing above touched the production database
+  console.log('Test 40: Test run stayed on the isolated database');
   assert.strictEqual(mongoose.connection.name, 'lms_test_suite_db', 'Suite must run on the isolated DB');
   assert.strictEqual(process.env.MONGODB_URI, TEST_DB_URI);
   console.log('✓ Production database lms_db untouched');
@@ -889,7 +1208,7 @@ async function runTests() {
   await mongoose.connection.close();
 
   console.log('\n======================================================');
-  console.log('ALL 31 AUTO-OPS SCHOOL LMS TESTS COMPLETED WITH 100% SUCCESS!');
+  console.log('ALL 40 AUTO-OPS SCHOOL LMS TESTS COMPLETED WITH 100% SUCCESS!');
   console.log('Isolated test database lms_test_suite_db wiped and closed.');
   console.log('Existing production database lms_db remained completely untouched.');
   console.log('======================================================\n');

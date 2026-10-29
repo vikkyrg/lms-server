@@ -58,6 +58,7 @@ router.get('/course/:courseId', getMaterialsByCourse);
 
 // Protected download/view route (Checks approved enrollment and active 3-month access)
 router.get('/:id/download', downloadMaterial);
+router.get('/:id', downloadMaterial);
 
 module.exports = router;
 

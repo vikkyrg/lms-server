@@ -198,18 +198,24 @@ exports.getCourseDetails = async (req, res, next) => {
 exports.createCourse = async (req, res, next) => {
   try {
     const {
-      title, slug, shortDescription, description, thumbnail, previewVideo, category,
+      title, slug, shortDescription, description, thumbnail, thumbnailImage, previewVideo, category,
       level, language, duration, curriculumTitle, learningOutcomes, prerequisites, isFree, price,
       discountPrice, status
     } = req.body;
     const courseData = {
-      title, slug, shortDescription, description, thumbnail, previewVideo, category,
+      title, slug, shortDescription, description, thumbnail, thumbnailImage, previewVideo, category,
       level, language, duration, curriculumTitle, learningOutcomes, prerequisites, isFree, price,
       discountPrice, status
     };
     courseData.instructor = req.user.id;
 
     const course = await Course.create(courseData);
+
+    // If a thumbnailImage ID was uploaded prior to course creation, associate it with this course
+    if (thumbnailImage && mongoose.isValidObjectId(thumbnailImage)) {
+      const CourseImage = require('../models/CourseImage');
+      await CourseImage.findByIdAndUpdate(thumbnailImage, { course: course._id }).catch(() => {});
+    }
 
     const { logAudit } = require('../utils/audit');
     await logAudit({
@@ -237,7 +243,7 @@ exports.updateCourse = async (req, res, next) => {
     }
 
     const allowedFields = [
-      'title', 'slug', 'shortDescription', 'description', 'thumbnail', 'previewVideo',
+      'title', 'slug', 'shortDescription', 'description', 'thumbnail', 'thumbnailImage', 'previewVideo',
       'category', 'level', 'language', 'duration', 'curriculumTitle', 'learningOutcomes', 'prerequisites',
       'isFree', 'price', 'discountPrice', 'status'
     ];
