@@ -21,6 +21,10 @@ const assignmentRoutes = require('./routes/assignmentRoutes');
 const certificateRoutes = require('./routes/certificateRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const materialRoutes = require('./routes/materialRoutes');
+const testimonialRoutes = require('./routes/testimonialRoutes');
+const videoTestimonialRoutes = require('./routes/videoTestimonialRoutes');
+const faqRoutes = require('./routes/faqRoutes');
+const projectRoutes = require('./routes/projectRoutes');
 
 const app = express();
 const authLimiter = rateLimit({
@@ -90,6 +94,10 @@ app.use('/api/v1/assignments', assignmentRoutes);
 app.use('/api/v1/certificates', certificateRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/materials', materialRoutes);
+app.use('/api/v1/testimonials', testimonialRoutes);
+app.use('/api/v1/video-testimonials', videoTestimonialRoutes);
+app.use('/api/v1/faqs', faqRoutes);
+app.use('/api/v1/projects', projectRoutes);
 
 // Error Handler
 app.use(errorHandler);
