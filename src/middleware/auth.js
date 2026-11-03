@@ -44,6 +44,13 @@ const protectMedia = (req, res, next) => {
   return protect(req, res, next);
 };
 
+const optionalMediaAuth = (req, res, next) => {
+  if (!req.headers.authorization && req.query.token) {
+    req.headers.authorization = `Bearer ${req.query.token}`;
+  }
+  return optionalAuth(req, res, next);
+};
+
 const isCourseOwnerOrAdmin = async (req, courseId) => {
   const Course = require('../models/Course');
   const course = await Course.findById(courseId).select('instructor');
@@ -74,4 +81,25 @@ const authorize = (...roles) => {
   };
 };
 
-module.exports = { protect, protectMedia, authorize, getJwtSecret, isCourseOwnerOrAdmin, requireCourseEnrollment };
+const optionalAuth = async (req, res, next) => {
+  let token;
+
+  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+    token = req.headers.authorization.split(' ')[1];
+  }
+
+  if (!token) {
+    req.user = null;
+    return next();
+  }
+
+  try {
+    const decoded = jwt.verify(token, getJwtSecret());
+    req.user = await User.findById(decoded.id).select('-password');
+  } catch (err) {
+    req.user = null;
+  }
+  next();
+};
+
+module.exports = { protect, protectMedia, optionalMediaAuth, authorize, optionalAuth, getJwtSecret, isCourseOwnerOrAdmin, requireCourseEnrollment };

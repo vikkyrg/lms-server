@@ -15,7 +15,7 @@ const {
   ,deleteLessonVideo
   ,streamLessonVideo
 } = require('../controllers/curriculumController');
-const { protect, protectMedia, authorize } = require('../middleware/auth');
+const { protect, protectMedia, optionalMediaAuth, authorize } = require('../middleware/auth');
 
 const videoDir = path.join(__dirname, '../../uploads/tmp-videos');
 if (!fs.existsSync(videoDir)) fs.mkdirSync(videoDir, { recursive: true });
@@ -49,6 +49,6 @@ router.put('/lessons/:id', protect, authorize('admin'), updateLesson);
 router.delete('/lessons/:id', protect, authorize('admin'), deleteLesson);
 router.post('/courses/:courseId/modules/:moduleId/lessons/:id/video', protect, authorize('admin'), videoUpload.single('video'), uploadLessonVideo);
 router.delete('/courses/:courseId/modules/:moduleId/lessons/:id/video', protect, authorize('admin'), deleteLessonVideo);
-router.get('/courses/:courseId/lessons/:lessonId/video', protectMedia, streamLessonVideo);
+router.get('/courses/:courseId/lessons/:lessonId/video', optionalMediaAuth, streamLessonVideo);
 
 module.exports = router;

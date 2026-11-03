@@ -59,6 +59,11 @@ const courseSchema = new mongoose.Schema({
     type: String,
     default: '10 Hours'
   },
+  videoDuration: {
+    type: Number,
+    default: 10,
+    min: 1
+  },
   // Admin-controlled heading for the curriculum section on the course
   // details page (e.g. "DevOps Learning Roadmap"). Falls back to a generic
   // title on the frontend when empty so no roadmap text is hardcoded.
@@ -90,6 +95,11 @@ const courseSchema = new mongoose.Schema({
     type: String,
     enum: ['draft', 'pending', 'published', 'rejected', 'archived'],
     default: 'published'
+  },
+  freePreviewCount: {
+    type: Number,
+    default: 2,
+    min: 0
   },
   rating: {
     type: Number,

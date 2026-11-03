@@ -44,7 +44,7 @@ exports.generateCertificate = async (req, res, next) => {
 
     const populatedCert = await Certificate.findById(certificate._id)
       .populate('studentId', 'name email')
-      .populate('courseId', 'title instructor');
+      .populate('courseId', 'title duration videoDuration instructor');
 
     res.status(200).json({ success: true, certificate: populatedCert });
   } catch (error) {
@@ -60,7 +60,7 @@ exports.verifyCertificate = async (req, res, next) => {
       .populate('studentId', 'name')
       .populate({
         path: 'courseId',
-        select: 'title duration',
+        select: 'title duration videoDuration',
         populate: { path: 'instructor', select: 'name headline' }
       });
 
@@ -86,39 +86,37 @@ exports.getMyCertificates = async (req, res, next) => {
   }
 };
 
+const { streamCertificatePdf } = require('../utils/pdfCertificate');
+
 exports.downloadCertificate = async (req, res, next) => {
   try {
     const certificate = await Certificate.findOne({
       _id: req.params.id,
       studentId: req.user.id
-    }).populate('studentId', 'name').populate('courseId', 'title');
+    }).populate('studentId', 'name').populate('courseId', 'title duration videoDuration');
 
     if (!certificate) {
       return res.status(404).json({ success: false, message: 'Certificate not found' });
     }
 
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${certificate.certificateNumber}.pdf"`);
-    const document = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 48 });
-    document.pipe(res);
-    document.rect(0, 0, 842, 595).fill('#f8fafc');
-    document.lineWidth(3).strokeColor('#4f46e5').rect(24, 24, 794, 547).stroke();
-    document.fillColor('#173563').fontSize(28).font('Helvetica-Bold').text('AutoOps School', { align: 'center' });
-    document.moveDown(1);
-    document.fillColor('#111827').fontSize(24).text('Certificate of Completion', { align: 'center' });
-    document.moveDown(1.5);
-    document.fillColor('#6b7280').fontSize(14).font('Helvetica').text('This certifies that', { align: 'center' });
-    document.moveDown(0.5);
-    document.fillColor('#111827').fontSize(32).font('Helvetica-Bold').text(certificate.studentId.name, { align: 'center' });
-    document.moveDown(0.8);
-    document.fillColor('#6b7280').fontSize(14).font('Helvetica').text('has successfully completed', { align: 'center' });
-    document.moveDown(0.5);
-    document.fillColor('#312e81').fontSize(22).font('Helvetica-Bold').text(certificate.courseId.title, { align: 'center' });
-    document.moveDown(2);
-    document.fillColor('#374151').fontSize(11).font('Helvetica')
-      .text(`Certificate number: ${certificate.certificateNumber}`, 72, 485)
-      .text(`Issued: ${new Date(certificate.issueDate).toLocaleDateString()}`, 600, 485, { align: 'right' });
-    document.end();
+    await streamCertificatePdf(res, certificate);
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.downloadPublicCertificate = async (req, res, next) => {
+  try {
+    const { certificateNumber } = req.params;
+    const certificate = await Certificate.findOne({ certificateNumber })
+      .populate('studentId', 'name')
+      .populate('courseId', 'title duration videoDuration');
+
+    if (!certificate) {
+      return res.status(404).json({ success: false, message: 'Certificate not found' });
+    }
+
+    await streamCertificatePdf(res, certificate);
   } catch (error) {
     next(error);
   }

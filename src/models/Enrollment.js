@@ -37,6 +37,29 @@ const enrollmentSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Lesson'
   }],
+  lessonProgress: [{
+    lesson: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Lesson',
+      required: true
+    },
+    playbackPosition: {
+      type: Number,
+      default: 0
+    },
+    secondsWatched: {
+      type: Number,
+      default: 0
+    },
+    isCompleted: {
+      type: Boolean,
+      default: false
+    },
+    lastUpdated: {
+      type: Date,
+      default: Date.now
+    }
+  }],
   lastAccessedLesson: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Lesson'
@@ -73,6 +96,18 @@ const enrollmentSchema = new mongoose.Schema({
   certificateIssued: {
     type: Boolean,
     default: false
+  },
+  // Admin sidebar notification read/unread tracking. Independent from the
+  // approval workflow: marking a notification as "read" only means the admin
+  // has opened Approvals & Access since this request arrived. It never changes
+  // the enrollment status or grant/revoke access.
+  notificationViewed: {
+    type: Boolean,
+    default: false
+  },
+  notificationViewedAt: {
+    type: Date,
+    default: null
   }
 }, {
   timestamps: true

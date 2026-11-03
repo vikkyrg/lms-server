@@ -4,7 +4,7 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
-require('dotenv').config();
+require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 
 const connectDB = require('./config/db');
 const errorHandler = require('./middleware/error');
@@ -16,8 +16,6 @@ const courseRoutes = require('./routes/courseRoutes');
 const curriculumRoutes = require('./routes/curriculumRoutes');
 const enrollmentRoutes = require('./routes/enrollmentRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
-const quizRoutes = require('./routes/quizRoutes');
-const assignmentRoutes = require('./routes/assignmentRoutes');
 const certificateRoutes = require('./routes/certificateRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const materialRoutes = require('./routes/materialRoutes');
@@ -25,6 +23,8 @@ const testimonialRoutes = require('./routes/testimonialRoutes');
 const videoTestimonialRoutes = require('./routes/videoTestimonialRoutes');
 const faqRoutes = require('./routes/faqRoutes');
 const projectRoutes = require('./routes/projectRoutes');
+const roadmapRoutes = require('./routes/roadmapRoutes');
+const reviewRoutes = require('./routes/reviewRoutes');
 
 const app = express();
 const authLimiter = rateLimit({
@@ -89,8 +89,6 @@ app.use('/api/v1/courses', courseRoutes);
 app.use('/api/v1/curriculum', curriculumRoutes);
 app.use('/api/v1/enrollments', enrollmentRoutes);
 app.use('/api/v1/payments', paymentRoutes);
-app.use('/api/v1/quizzes', quizRoutes);
-app.use('/api/v1/assignments', assignmentRoutes);
 app.use('/api/v1/certificates', certificateRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/materials', materialRoutes);
@@ -98,6 +96,8 @@ app.use('/api/v1/testimonials', testimonialRoutes);
 app.use('/api/v1/video-testimonials', videoTestimonialRoutes);
 app.use('/api/v1/faqs', faqRoutes);
 app.use('/api/v1/projects', projectRoutes);
+app.use('/api/v1/roadmap', roadmapRoutes);
+app.use('/api/v1/reviews', reviewRoutes);
 
 // Error Handler
 app.use(errorHandler);
@@ -105,6 +105,21 @@ app.use(errorHandler);
 const PORT = process.env.PORT || 5000;
 const server = app.listen(PORT, () => {
   console.log(`LMS Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
+});
+
+// Graceful shutdown — prevents node --watch / nodemon from crashing on EADDRINUSE or unhandled errors
+server.on('error', (err) => {
+  console.error('Server error:', err.message);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled Rejection:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err.message);
+  server.close(() => process.exit(1));
 });
 
 module.exports = app;

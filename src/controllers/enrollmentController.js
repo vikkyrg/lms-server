@@ -22,7 +22,7 @@ const refreshEnrollmentStatus = async (enrollment) => {
   return enrollment;
 };
 
-// @desc Request free course enrollment (awaiting Admin approval)
+// @desc Request course enrollment (awaiting Admin approval)
 // @route POST /api/v1/enrollments/free
 exports.enrollFree = async (req, res, next) => {
   try {
@@ -42,16 +42,12 @@ exports.enrollFree = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Cannot enroll in an unpublished course' });
     }
 
-    if (!course.isFree && course.price > 0) {
-      return res.status(400).json({ success: false, message: 'This course requires payment' });
-    }
-
     const existing = await Enrollment.findOne({ student: studentId, course: courseId });
     if (existing) {
       if (['approved', 'completed'].includes(existing.status) && isEnrollmentActive(existing)) {
         return res.status(400).json({ success: false, message: 'You already have active access to this course' });
       }
-      if (existing.status === 'pending_approval') {
+      if (existing.status === 'pending_approval' || existing.status === 'pending') {
         return res.status(400).json({ success: false, message: 'Your enrollment is already awaiting Admin approval' });
       }
     }
@@ -62,12 +58,16 @@ exports.enrollFree = async (req, res, next) => {
       enrollment.enrolledAt = new Date();
       enrollment.accessStartDate = null;
       enrollment.accessExpiryDate = null;
+      enrollment.rejectionReason = '';
+      // Re-entering the approval queue counts as a fresh, unread notification.
+      enrollment.notificationViewed = false;
+      enrollment.notificationViewedAt = null;
       await enrollment.save();
     } else {
       enrollment = await Enrollment.create({
         student: studentId,
         course: courseId,
-        status: 'pending_approval' // Exact AutoOps School workflow
+        status: 'pending_approval'
       });
       await Course.findByIdAndUpdate(courseId, { $inc: { enrollmentCount: 1 } });
     }
@@ -221,18 +221,74 @@ exports.getClassroom = async (req, res, next) => {
   }
 };
 
-// @desc Mark lesson as completed
-// @route POST /api/v1/enrollments/complete-lesson
-exports.completeLesson = async (req, res, next) => {
+// @desc Save ongoing video playback position and watched seconds
+// @route POST /api/v1/enrollments/video-progress
+exports.saveVideoProgress = async (req, res, next) => {
   try {
-    const { courseId, lessonId } = req.body;
+    const { courseId, lessonId, playbackPosition, secondsWatched } = req.body;
     const studentId = req.user.id;
 
     if (!mongoose.isValidObjectId(courseId) || !mongoose.isValidObjectId(lessonId)) {
       return res.status(400).json({ success: false, message: 'Invalid course or lesson id' });
     }
 
-    const lesson = await Lesson.findOne({ _id: lessonId, courseId }).select('_id');
+    const enrollment = await Enrollment.findOne({ student: studentId, course: courseId });
+    if (!enrollment) {
+      return res.status(404).json({ success: false, message: 'Enrollment not found' });
+    }
+
+    if (!isEnrollmentActive(enrollment) && req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Course access has expired or is not active' });
+    }
+
+    if (!Array.isArray(enrollment.lessonProgress)) {
+      enrollment.lessonProgress = [];
+    }
+
+    const pos = Math.max(0, Number(playbackPosition) || 0);
+    const watched = Math.max(0, Number(secondsWatched) || 0);
+
+    const existingIdx = enrollment.lessonProgress.findIndex(
+      (lp) => lp.lesson && lp.lesson.toString() === lessonId.toString()
+    );
+
+    if (existingIdx >= 0) {
+      enrollment.lessonProgress[existingIdx].playbackPosition = pos;
+      if (watched > (enrollment.lessonProgress[existingIdx].secondsWatched || 0)) {
+        enrollment.lessonProgress[existingIdx].secondsWatched = watched;
+      }
+      enrollment.lessonProgress[existingIdx].lastUpdated = new Date();
+    } else {
+      enrollment.lessonProgress.push({
+        lesson: lessonId,
+        playbackPosition: pos,
+        secondsWatched: watched,
+        isCompleted: false,
+        lastUpdated: new Date()
+      });
+    }
+
+    enrollment.lastAccessedLesson = lessonId;
+    await enrollment.save();
+
+    res.status(200).json({ success: true, lessonProgress: enrollment.lessonProgress });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc Mark lesson as completed
+// @route POST /api/v1/enrollments/complete-lesson
+exports.completeLesson = async (req, res, next) => {
+  try {
+    const { courseId, lessonId, duration, watchedSeconds } = req.body;
+    const studentId = req.user.id;
+
+    if (!mongoose.isValidObjectId(courseId) || !mongoose.isValidObjectId(lessonId)) {
+      return res.status(400).json({ success: false, message: 'Invalid course or lesson id' });
+    }
+
+    const lesson = await Lesson.findOne({ _id: lessonId, courseId });
     if (!lesson) {
       return res.status(404).json({ success: false, message: 'Lesson does not belong to this course' });
     }
@@ -249,17 +305,92 @@ exports.completeLesson = async (req, res, next) => {
       return res.status(403).json({ success: false, message: 'Course access has expired or is not active' });
     }
 
-    if (!enrollment.completedLessons.includes(lessonId)) {
+    // If already marked completed in enrollment, treat as idempotent success
+    const alreadyCompleted = enrollment.completedLessons.some(
+      (id) => id.toString() === lessonId.toString()
+    );
+    if (alreadyCompleted) {
+      return res.status(200).json({ success: true, progress: enrollment.progress, enrollment });
+    }
+
+    // Validate sequential completion if lesson is a video
+    // Order curriculum by Module order first, then Lesson order
+    const modules = await Module.find({ courseId }).sort('order').select('_id').lean();
+    const moduleOrderMap = new Map(modules.map((m, idx) => [m._id.toString(), idx]));
+    
+    const allCourseLessons = await Lesson.find({ courseId }).lean();
+    allCourseLessons.sort((a, b) => {
+      const modA = moduleOrderMap.has(a.moduleId?.toString()) ? moduleOrderMap.get(a.moduleId.toString()) : 999;
+      const modB = moduleOrderMap.has(b.moduleId?.toString()) ? moduleOrderMap.get(b.moduleId.toString()) : 999;
+      if (modA !== modB) return modA - modB;
+      return (a.order || 0) - (b.order || 0);
+    });
+
+    const currentIndex = allCourseLessons.findIndex((l) => l._id.toString() === lessonId.toString());
+
+    if (currentIndex > 0 && req.user.role !== 'admin') {
+      const prevLesson = allCourseLessons[currentIndex - 1];
+      const prevCompleted = enrollment.completedLessons.some(
+        (id) => id.toString() === prevLesson._id.toString()
+      );
+      if (!prevCompleted) {
+        return res.status(400).json({
+          success: false,
+          message: 'Previous lesson must be completed before marking this lesson complete.'
+        });
+      }
+    }
+
+    // Validate that if lesson has video, student actually watched it
+    const hasVideo = !!(lesson.videoUrl || lesson.video?.fileId || lesson.video?.storageKey);
+    if (hasVideo && req.user.role !== 'admin') {
+      const declaredWatched = Number(watchedSeconds) || 0;
+      const reportedDuration = Number(duration) || (lesson.duration ? lesson.duration * 60 : 0);
+
+      // Check both declared watched seconds and existing recorded seconds in enrollment
+      const savedProgress = (enrollment.lessonProgress || []).find(
+        (lp) => lp.lesson && lp.lesson.toString() === lessonId.toString()
+      );
+      const effectiveWatched = Math.max(declaredWatched, savedProgress?.secondsWatched || 0);
+
+      // Require watching at least 95% of duration (minimum 3 seconds for very short test clips)
+      if (reportedDuration > 0 && effectiveWatched < Math.max(reportedDuration * 0.95, 3)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Video must be fully watched from start to end to complete this lesson.'
+        });
+      }
+    }
+
+    if (!enrollment.completedLessons.some((id) => id.toString() === lessonId.toString())) {
       enrollment.completedLessons.push(lessonId);
     }
     enrollment.lastAccessedLesson = lessonId;
 
+    if (!Array.isArray(enrollment.lessonProgress)) {
+      enrollment.lessonProgress = [];
+    }
+    const existingIdx = enrollment.lessonProgress.findIndex(
+      (lp) => lp.lesson && lp.lesson.toString() === lessonId.toString()
+    );
+    if (existingIdx >= 0) {
+      enrollment.lessonProgress[existingIdx].isCompleted = true;
+      enrollment.lessonProgress[existingIdx].lastUpdated = new Date();
+    } else {
+      enrollment.lessonProgress.push({
+        lesson: lessonId,
+        playbackPosition: Number(duration) || 0,
+        secondsWatched: Number(watchedSeconds) || Number(duration) || 0,
+        isCompleted: true,
+        lastUpdated: new Date()
+      });
+    }
+
     // Calculate progress
-    const courseLessons = await Lesson.find({ courseId }).select('_id');
-    const lessonIds = new Set(courseLessons.map(item => item._id.toString()));
-    enrollment.completedLessons = enrollment.completedLessons.filter(id => lessonIds.has(id.toString()));
-    const totalLessons = courseLessons.length;
-    const completedCount = new Set(enrollment.completedLessons.map(id => id.toString())).size;
+    const lessonIds = new Set(allCourseLessons.map((item) => item._id.toString()));
+    enrollment.completedLessons = enrollment.completedLessons.filter((id) => lessonIds.has(id.toString()));
+    const totalLessons = allCourseLessons.length;
+    const completedCount = new Set(enrollment.completedLessons.map((id) => id.toString())).size;
     const progress = totalLessons > 0 ? Math.round((completedCount / totalLessons) * 100) : 100;
 
     enrollment.progress = Math.min(progress, 100);
@@ -361,13 +492,7 @@ exports.approveEnrollment = async (req, res, next) => {
     const isPaidCourse = !!enrollment.course
       && !enrollment.course.isFree
       && Number(enrollment.course.price || 0) > 0;
-    if (isPaidCourse) {
-      if (!enrollment.payment) {
-        return res.status(400).json({
-          success: false,
-          message: 'Cannot approve a paid-course enrollment without a linked payment record'
-        });
-      }
+    if (isPaidCourse && enrollment.payment) {
       if (enrollment.payment.status !== 'completed') {
         return res.status(400).json({
           success: false,
@@ -482,6 +607,81 @@ exports.rejectEnrollment = async (req, res, next) => {
       success: true,
       message: 'Enrollment marked as rejected.',
       enrollment
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc Delete an enrollment request (Admin).
+// Safety rules:
+// - Only removes the Enrollment document. The student's User account is never touched.
+// - Payment records are never deleted (financial audit history is preserved).
+// - Requests tied to a verified (captured) payment must be rejected, not deleted,
+//   so the payment <-> enrollment linkage stays intact for reconciliation.
+// - Enrollments that already received (or still hold) course access cannot be
+//   deleted here, because that would silently wipe progress/certificate history.
+// @route DELETE /api/v1/enrollments/admin/:id
+exports.deleteEnrollment = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid enrollment ID' });
+    }
+
+    const enrollment = await Enrollment.findById(id)
+      .populate('student', 'name email')
+      .populate('course', 'title')
+      .populate('payment', 'status amount orderId');
+
+    if (!enrollment) {
+      return res.status(404).json({ success: false, message: 'Enrollment not found' });
+    }
+
+    // Paid requests with a gateway-verified payment keep their approval/rejection
+    // trail; deleting them would break payment history reporting.
+    const paymentVerified = enrollment.payment && ['completed', 'refunded', 'partially_refunded'].includes(enrollment.payment.status);
+    if (paymentVerified) {
+      return res.status(400).json({
+        success: false,
+        message: 'This request is linked to a verified payment. Paid enrollment records and payment history cannot be deleted — use Reject instead.'
+      });
+    }
+
+    // Active/expired/completed enrollments represent granted access and progress.
+    if (!['pending_approval', 'rejected'].includes(enrollment.status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Enrollments with status '${enrollment.status}' have course access or progress attached and cannot be deleted here.`
+      });
+    }
+
+    // Delete only the enrollment request. Student account and payment docs stay.
+    await enrollment.deleteOne();
+
+    await logAudit({
+      action: 'ENROLLMENT_DELETED',
+      performedBy: req.user,
+      role: req.user.role,
+      targetResource: 'Enrollment',
+      targetId: id,
+      details: {
+        student: enrollment.student?.email,
+        course: enrollment.course?.title,
+        statusAtDeletion: enrollment.status
+      }
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Enrollment request deleted. The student account and payment records were preserved.',
+      deletedEnrollment: {
+        _id: id,
+        student: enrollment.student,
+        course: enrollment.course,
+        status: enrollment.status
+      }
     });
   } catch (error) {
     next(error);

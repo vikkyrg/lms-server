@@ -2,170 +2,7 @@ const Project = require('../models/Project');
 const fs = require('fs');
 const path = require('path');
 
-const SEED_PROJECTS = [
-  {
-    title: 'Automated CI/CD Application Delivery',
-    slug: 'automated-cicd-application-delivery',
-    shortDescription: 'Build a complete CI/CD pipeline that tests, packages, and deploys applications safely with zero manual intervention.',
-    description: 'This hands-on industry project guides you through building a production-grade continuous integration and continuous deployment (CI/CD) delivery pipeline. Starting from Git commit triggers, you will configure Jenkins multi-branch pipelines, execute automated unit and integration tests, containerize applications using optimized Dockerfiles, publish artifacts to container registries, and trigger zero-downtime rolling deployments to production servers.\n\nKey focuses include credential masking, pipeline error handling, post-build notifications, and staging approval gates.',
-    category: 'CI/CD',
-    image: '',
-    imageAlt: 'Automated CI/CD Pipeline Architecture',
-    technologies: ['Git', 'Jenkins', 'Docker', 'Linux', 'SonarQube'],
-    learningOutcomes: [
-      'Automate pipeline triggers on repository events and webhooks',
-      'Integrate static code analysis and automated test reporting',
-      'Implement multi-stage container artifact creation and tagging',
-      'Configure automated rollback upon deployment health-check failures'
-    ],
-    objectives: [
-      'Understand end-to-end continuous delivery architecture',
-      'Master Jenkinsfile pipeline-as-code scripting',
-      'Eliminate manual build friction and deployment inconsistencies'
-    ],
-    prerequisites: 'Basic knowledge of Linux commands and Git version control',
-    difficulty: 'Intermediate',
-    estimatedDuration: '2 weeks',
-    status: 'published',
-    displayOrder: 1,
-    isFeatured: true
-  },
-  {
-    title: 'Containerized Microservices Platform',
-    slug: 'containerized-microservices-platform',
-    shortDescription: 'Package and run multi-service applications consistently across development, staging, and production environments.',
-    description: 'Transition monolithic workloads into decomposed, lightweight containerized services. You will design isolated Docker networks, configure persistent volume storage for database backends, write multi-container orchestration manifests with Docker Compose, and establish environment variable separation across staging and production.',
-    category: 'DevOps',
-    image: '',
-    imageAlt: 'Docker Microservices Architecture Diagram',
-    technologies: ['Docker', 'Docker Compose', 'Linux', 'Nginx', 'PostgreSQL'],
-    learningOutcomes: [
-      'Design reproducible multi-stage Docker build files',
-      'Manage container networking, service discovery, and DNS resolution',
-      'Persist stateful container data using managed Docker volumes',
-      'Implement reverse proxy load balancing with Nginx'
-    ],
-    objectives: [
-      'Achieve parity across local development and production runtime',
-      'Containerize multi-tier web applications cleanly',
-      'Manage environment configuration and secret injection securely'
-    ],
-    prerequisites: 'Familiarity with web application components (frontend, API, database)',
-    difficulty: 'Intermediate',
-    estimatedDuration: '2 weeks',
-    status: 'published',
-    displayOrder: 2,
-    isFeatured: true
-  },
-  {
-    title: 'Kubernetes Resilient Cluster Lab',
-    slug: 'kubernetes-resilient-cluster-lab',
-    shortDescription: 'Deploy resilient web applications using Kubernetes deployments, services, ingress routing, and health checks.',
-    description: 'Build and operate a fault-tolerant container orchestration cluster on Kubernetes. You will configure self-healing deployments, define cluster IP and load balancer services, configure Ingress controllers with SSL termination, and tune Horizontal Pod Autoscalers (HPA) responding to live CPU/memory load spikes.',
-    category: 'Kubernetes',
-    image: '',
-    imageAlt: 'Kubernetes Cluster Architecture',
-    technologies: ['Kubernetes', 'kubectl', 'Docker', 'Linux', 'Helm'],
-    learningOutcomes: [
-      'Deploy zero-downtime rolling updates and declarative rollbacks',
-      'Configure liveness and readiness health probes to prevent traffic routing errors',
-      'Implement resource quotas, limits, and Horizontal Pod Autoscalers',
-      'Manage external traffic routing using Kubernetes Ingress controllers'
-    ],
-    objectives: [
-      'Master core Kubernetes primitives and manifest architectures',
-      'Guarantee high availability under sudden traffic surges',
-      'Debug pod eviction, crash looping, and networking bottlenecks'
-    ],
-    prerequisites: 'Foundational container knowledge (Docker)',
-    difficulty: 'Advanced',
-    estimatedDuration: '3 weeks',
-    status: 'published',
-    displayOrder: 3,
-    isFeatured: true
-  },
-  {
-    title: 'Repeatable Cloud Infrastructure Baseline',
-    slug: 'repeatable-cloud-infrastructure-baseline',
-    shortDescription: 'Define and provision cloud resources and networking infrastructure declaratively using Infrastructure as Code.',
-    description: 'Adopt Infrastructure as Code (IaC) to eliminate manual cloud console configuration. Using Terraform, you will provision a complete cloud network topology with public and private subnets, NAT gateways, route tables, compute instances, security groups, and automated state-locking with remote backends.',
-    category: 'Infrastructure Automation',
-    image: '',
-    imageAlt: 'Terraform Cloud Infrastructure as Code Diagram',
-    technologies: ['AWS/Azure', 'Terraform', 'Linux', 'Bash'],
-    learningOutcomes: [
-      'Architect modular Terraform components for repeatable reuse',
-      'Configure remote backend state storage with distributed state locking',
-      'Provision multi-tier virtual private clouds and network routes',
-      'Apply least-privilege security group and IAM policies'
-    ],
-    objectives: [
-      'Eliminate configuration drift with declarative infrastructure',
-      'Learn Terraform state management best practices',
-      'Automate cloud infrastructure tear-down and recreation'
-    ],
-    prerequisites: 'Basic cloud computing concepts and networking basics',
-    difficulty: 'Intermediate',
-    estimatedDuration: '2 weeks',
-    status: 'published',
-    displayOrder: 4,
-    isFeatured: false
-  },
-  {
-    title: 'Full-Stack Web Application Deployment',
-    slug: 'full-stack-web-application-deployment',
-    shortDescription: 'Develop and deploy full-stack database-backed applications with secure REST APIs, authentication, and responsive views.',
-    description: 'Experience the entire software release lifecycle from code compilation to production runtime. You will configure automated database migrations, wire secure JWT token-based authentication, enforce CORS and rate-limiting policies, and deploy the entire solution to scalable cloud compute.',
-    category: 'Cloud Computing',
-    image: '',
-    imageAlt: 'Full Stack Web Architecture',
-    technologies: ['Java / Python', 'Node.js', 'REST APIs', 'Databases', 'Nginx'],
-    learningOutcomes: [
-      'Integrate frontend user interfaces with protected backend REST endpoints',
-      'Manage secure connection pooling and database schema migration',
-      'Apply production web server headers, compression, and security rules',
-      'Implement health check endpoints and log aggregation'
-    ],
-    objectives: [
-      'Understand full-stack deployment dependencies and environment variables',
-      'Secure web applications against common vulnerabilities',
-      'Build end-to-end technical confidence'
-    ],
-    prerequisites: 'Basic programming knowledge in Java, Python, or JavaScript',
-    difficulty: 'Intermediate',
-    estimatedDuration: '3 weeks',
-    status: 'published',
-    displayOrder: 5,
-    isFeatured: false
-  },
-  {
-    title: 'Observability, Monitoring & Troubleshooting',
-    slug: 'observability-monitoring-troubleshooting',
-    shortDescription: 'Instrument service metrics, establish performance dashboards, and set actionable alerts to diagnose incidents.',
-    description: 'Set up an end-to-end monitoring and alerting stack using Prometheus and Grafana. You will scrape system and application performance metrics, design interactive dashboards for latency, traffic, errors, and saturation (the 4 golden signals), and configure Alertmanager to broadcast immediate alerts to Slack or email.',
-    category: 'Monitoring',
-    image: '',
-    imageAlt: 'Prometheus & Grafana Observability Dashboard',
-    technologies: ['Prometheus', 'Grafana', 'Node Exporter', 'Alertmanager', 'Linux'],
-    learningOutcomes: [
-      'Deploy metric scraping exporters across compute instances and containers',
-      'Write PromQL queries to compute request rates, p95 latencies, and error budgets',
-      'Build informative Grafana dashboards for engineering visibility',
-      'Configure proactive threshold alerts and notification routing'
-    ],
-    objectives: [
-      'Detect system degradation before users encounter outages',
-      'Troubleshoot production incidents systematically with real metrics',
-      'Minimize Mean Time to Detection (MTTD) and Resolution (MTTR)'
-    ],
-    prerequisites: 'Basic Linux system administration',
-    difficulty: 'Advanced',
-    estimatedDuration: '2 weeks',
-    status: 'published',
-    displayOrder: 6,
-    isFeatured: false
-  }
-];
+const { SEED_PROJECTS } = require('../utils/defaultProjects');
 
 // Helper to seed projects if collection is empty
 const seedProjectsIfEmpty = async () => {
@@ -241,10 +78,48 @@ exports.getProjectBySlug = async (req, res, next) => {
   try {
     await seedProjectsIfEmpty();
 
-    const project = await Project.findOne({
-      slug: req.params.slug,
-      status: 'published'
-    });
+    const param = (req.params.slug || '').trim();
+    const query = { status: 'published' };
+
+    const mongoose = require('mongoose');
+    if (mongoose.isValidObjectId(param)) {
+      query.$or = [{ slug: param }, { _id: param }];
+    } else {
+      // Direct slug match OR normalized slug match (e.g. handle dashes or minor variations)
+      const normalized = param.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, '');
+      query.$or = [
+        { slug: param },
+        { slug: normalized },
+        { slug: { $regex: new RegExp(`^${param.replace(/[-_]/g, '.*')}$`, 'i') } }
+      ];
+    }
+
+    let project = await Project.findOne(query);
+
+    // Fallback: Check if this matches a project in Roadmap configuration
+    if (!project) {
+      const Roadmap = require('../models/Roadmap');
+      const roadmap = await Roadmap.findOne({ slug: 'devops-roadmap' }).lean();
+      const matchedRoadmapProject = (roadmap?.projects || []).find((rp) => {
+        const rpSlug = (rp.detailsUrl || '').replace(/^\/projects\/?/, '');
+        return rpSlug === param || rp.title.toLowerCase().includes(param.toLowerCase());
+      });
+
+      if (matchedRoadmapProject) {
+        project = {
+          _id: matchedRoadmapProject._id || `rm-${Date.now()}`,
+          title: matchedRoadmapProject.title,
+          slug: param,
+          shortDescription: matchedRoadmapProject.description,
+          description: matchedRoadmapProject.description,
+          technologies: matchedRoadmapProject.technologies || [],
+          difficulty: matchedRoadmapProject.difficulty || 'Intermediate',
+          learningOutcomes: matchedRoadmapProject.learningOutcomes || [],
+          objectives: matchedRoadmapProject.learningOutcomes || [],
+          status: 'published'
+        };
+      }
+    }
 
     if (!project) {
       return res.status(404).json({

@@ -2,43 +2,24 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs');
+const os = require('os');
 const {
   getPublicVideoTestimonials,
   getAdminVideoTestimonials,
   getVideoTestimonialById,
+  streamVideo,
+  getThumbnail,
   createVideoTestimonial,
   updateVideoTestimonial,
   deleteVideoTestimonial
 } = require('../controllers/videoTestimonialController');
 const { protect, authorize } = require('../middleware/auth');
 
-// Setup upload folders
-const videoDir = path.join(__dirname, '../../uploads/videos');
-const thumbDir = path.join(__dirname, '../../uploads/thumbnails');
-if (!fs.existsSync(videoDir)) fs.mkdirSync(videoDir, { recursive: true });
-if (!fs.existsSync(thumbDir)) fs.mkdirSync(thumbDir, { recursive: true });
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    if (file.fieldname === 'videoFile') {
-      cb(null, videoDir);
-    } else {
-      cb(null, thumbDir);
-    }
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    const prefix = file.fieldname === 'videoFile' ? 'video' : 'thumb';
-    const unique = `${prefix}-${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
-    cb(null, unique);
-  }
-});
-
+// Multer temporary storage for uploading to MongoDB GridFS / Buffer
 const upload = multer({
-  storage,
+  dest: os.tmpdir(),
   limits: {
-    fileSize: 100 * 1024 * 1024 // 100MB for uploaded videos, thumbnails much smaller
+    fileSize: 100 * 1024 * 1024 // 100MB limit for video files
   },
   fileFilter: (req, file, cb) => {
     if (file.fieldname === 'videoFile') {
@@ -50,7 +31,7 @@ const upload = multer({
       }
     } else {
       const allowedImages = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
-      if (allowedImages.includes(file.mimetype)) {
+      if (allowedImages.includes(file.mimetype) || file.originalname.match(/\.(jpg|jpeg|png|webp)$/i)) {
         cb(null, true);
       } else {
         cb(new Error('Only JPG, JPEG, PNG, and WebP images are allowed for thumbnails'));
@@ -64,8 +45,11 @@ const uploadFields = upload.fields([
   { name: 'thumbnailFile', maxCount: 1 }
 ]);
 
-// Public endpoint for homepage
+// Public endpoints
 router.get('/', getPublicVideoTestimonials);
+router.get('/:id/video', streamVideo);
+router.get('/:id/stream', streamVideo);
+router.get('/:id/thumbnail', getThumbnail);
 
 // Admin endpoints
 router.get('/admin', protect, authorize('admin'), getAdminVideoTestimonials);
@@ -75,4 +59,3 @@ router.put('/:id', protect, authorize('admin'), uploadFields, updateVideoTestimo
 router.delete('/:id', protect, authorize('admin'), deleteVideoTestimonial);
 
 module.exports = router;
-

@@ -14,38 +14,58 @@ const generateToken = (id) => {
 // @route POST /api/v1/auth/register
 exports.register = async (req, res, next) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, phone, password } = req.body;
 
-    if (!name || typeof name !== 'string' || name.trim().length < 2
-      || !email || typeof email !== 'string'
-      || !password || typeof password !== 'string' || password.length < 8) {
-      return res.status(400).json({ success: false, message: 'Please provide all required fields' });
+    if (!name || typeof name !== 'string' || name.trim().length < 2) {
+      return res.status(400).json({ success: false, message: 'Please provide a valid full name' });
     }
 
-    const userExists = await User.findOne({ email });
-    if (userExists) {
-      return res.status(400).json({ success: false, message: 'Email already registered' });
+    if (!email || typeof email !== 'string' || !/^\S+@\S+\.\S+$/.test(email)) {
+      return res.status(400).json({ success: false, message: 'Please provide a valid email address' });
     }
 
-    // Public registration only allows student role
+    if (!phone || typeof phone !== 'string' || phone.trim().length < 7) {
+      return res.status(400).json({ success: false, message: 'Please provide a valid contact phone number' });
+    }
+
+    if (!password || typeof password !== 'string' || password.length < 6) {
+      return res.status(400).json({ success: false, message: 'Password must contain at least 6 characters' });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPhone = phone.trim();
+
+    const emailExists = await User.findOne({ email: cleanEmail });
+    if (emailExists) {
+      return res.status(400).json({ success: false, message: 'Email address already registered' });
+    }
+
+    const phoneExists = await User.findOne({ phone: cleanPhone });
+    if (phoneExists) {
+      return res.status(400).json({ success: false, message: 'Phone number already registered with an existing account' });
+    }
+
+    // Public registration only allows student role by default
     const user = await User.create({
-      name,
-      email,
+      name: name.trim(),
+      email: cleanEmail,
+      phone: cleanPhone,
       password,
       role: 'student',
-      isVerified: false
+      isVerified: true // Set active/verified for seamless student LMS experience
     });
 
-    await sendVerificationEmail(user);
     const token = generateToken(user._id);
 
     res.status(201).json({
       success: true,
+      message: 'Account created successfully',
       token,
       user: {
         id: user._id,
         name: user.name,
         email: user.email,
+        phone: user.phone,
         role: user.role,
         avatar: user.avatar
       }

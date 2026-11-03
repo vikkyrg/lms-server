@@ -166,20 +166,57 @@ exports.getCourseDetails = async (req, res, next) => {
     const moduleIds = modules.map(m => m._id);
     const lessons = await Lesson.find({ moduleId: { $in: moduleIds } }).sort('order');
 
+    // Determine user active enrollment status if token was provided
+    let hasFullAccess = false;
+    if (req.user) {
+      if (req.user.role === 'admin') {
+        hasFullAccess = true;
+      } else {
+        const Enrollment = require('../models/Enrollment');
+        const { isEnrollmentActive } = require('../utils/accessDuration');
+        const enr = await Enrollment.findOne({ student: req.user._id || req.user.id, course: course._id });
+        if (enr && isEnrollmentActive(enr)) {
+          hasFullAccess = true;
+        }
+      }
+    }
+
+    const freePreviewCount = typeof course.freePreviewCount === 'number' ? course.freePreviewCount : 2;
+
+    // Track chronological lesson index across the complete curriculum
+    let runningLessonIndex = 0;
+
     // Group lessons inside modules
     const curriculum = modules.map(mod => {
+      const modLessons = lessons.filter(l => l.moduleId.toString() === mod._id.toString());
       return {
         ...mod.toObject(),
-        lessons: lessons
-          .filter(l => l.moduleId.toString() === mod._id.toString())
-          .map(l => ({
+        lessons: modLessons.map(l => {
+          runningLessonIndex += 1;
+          const isFreePreview = runningLessonIndex <= freePreviewCount || Boolean(l.isPreview);
+          const isUnlocked = hasFullAccess || isFreePreview;
+
+          return {
             _id: l._id,
             title: l.title,
+            description: l.description,
             duration: l.duration,
             order: l.order,
-            isPreview: l.isPreview
-            // Hide sensitive videoUrl from public viewers if not preview
-          }))
+            lessonPosition: runningLessonIndex,
+            isFreePreview,
+            isLocked: !isUnlocked,
+            hasAccess: isUnlocked,
+            accessType: hasFullAccess
+              ? 'enrolled'
+              : isFreePreview
+              ? 'free_preview'
+              : 'purchase_required',
+            // Only expose playable video URL/endpoint when the user is authorized or it is free preview
+            videoUrl: isUnlocked
+              ? (l.video?.fileId ? `/api/v1/curriculum/courses/${course._id}/lessons/${l._id}/video` : l.videoUrl)
+              : ''
+          };
+        })
       };
     });
 
@@ -199,13 +236,24 @@ exports.createCourse = async (req, res, next) => {
   try {
     const {
       title, slug, shortDescription, description, thumbnail, thumbnailImage, previewVideo, category,
-      level, language, duration, curriculumTitle, learningOutcomes, prerequisites, isFree, price,
-      discountPrice, status
+      level, language, duration, videoDuration, curriculumTitle, learningOutcomes, prerequisites, isFree, price,
+      discountPrice, status, freePreviewCount
     } = req.body;
+
+    const numericDuration = videoDuration !== undefined && videoDuration !== null && videoDuration !== ''
+      ? Math.max(1, Number(videoDuration))
+      : (parseFloat(duration) || 10);
+
+    const formattedDuration = `${numericDuration} Hours`;
+
     const courseData = {
       title, slug, shortDescription, description, thumbnail, thumbnailImage, previewVideo, category,
-      level, language, duration, curriculumTitle, learningOutcomes, prerequisites, isFree, price,
-      discountPrice, status
+      level, language,
+      duration: duration || formattedDuration,
+      videoDuration: numericDuration,
+      curriculumTitle, learningOutcomes, prerequisites, isFree, price,
+      discountPrice, status,
+      freePreviewCount: freePreviewCount !== undefined ? Math.max(0, Number(freePreviewCount)) : 2
     };
     courseData.instructor = req.user.id;
 
@@ -244,13 +292,26 @@ exports.updateCourse = async (req, res, next) => {
 
     const allowedFields = [
       'title', 'slug', 'shortDescription', 'description', 'thumbnail', 'thumbnailImage', 'previewVideo',
-      'category', 'level', 'language', 'duration', 'curriculumTitle', 'learningOutcomes', 'prerequisites',
-      'isFree', 'price', 'discountPrice', 'status'
+      'category', 'level', 'language', 'duration', 'videoDuration', 'curriculumTitle', 'learningOutcomes', 'prerequisites',
+      'isFree', 'price', 'discountPrice', 'status', 'freePreviewCount'
     ];
     const updates = {};
     allowedFields.forEach(field => {
       if (req.body[field] !== undefined) updates[field] = req.body[field];
     });
+
+    if (req.body.videoDuration !== undefined && req.body.videoDuration !== null && req.body.videoDuration !== '') {
+      const numHours = Math.max(1, Number(req.body.videoDuration));
+      updates.videoDuration = numHours;
+      updates.duration = `${numHours} Hours`;
+    } else if (req.body.duration !== undefined) {
+      const parsedHours = parseFloat(req.body.duration);
+      if (!isNaN(parsedHours)) {
+        updates.videoDuration = parsedHours;
+        updates.duration = `${parsedHours} Hours`;
+      }
+    }
+
     course = await Course.findByIdAndUpdate(req.params.id, updates, {
       new: true,
       runValidators: true
@@ -272,7 +333,7 @@ exports.updateCourse = async (req, res, next) => {
   }
 };
 
-// @desc Delete course
+// @desc Delete course (Permanently deletes course and cleans up associated modules, lessons, and materials)
 // @route DELETE /api/v1/courses/:id
 exports.deleteCourse = async (req, res, next) => {
   try {
@@ -281,10 +342,27 @@ exports.deleteCourse = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Course not found' });
     }
 
-    course.status = 'archived';
-    await course.save();
+    const courseId = course._id;
 
-    res.status(200).json({ success: true, message: 'Course archived successfully' });
+    // Delete associated lessons, modules, and course materials
+    await Promise.all([
+      Lesson.deleteMany({ courseId }),
+      Module.deleteMany({ courseId }),
+      Course.findByIdAndDelete(courseId)
+    ]);
+
+    // Clean up materials and images if models exist
+    try {
+      const CourseMaterial = require('../models/CourseMaterial');
+      await CourseMaterial.deleteMany({ courseId });
+    } catch (_) {}
+
+    try {
+      const CourseImage = require('../models/CourseImage');
+      await CourseImage.deleteMany({ courseId });
+    } catch (_) {}
+
+    res.status(200).json({ success: true, message: 'Course deleted successfully' });
   } catch (error) {
     next(error);
   }

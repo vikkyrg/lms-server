@@ -1,5 +1,10 @@
 const mongoose = require('mongoose');
 
+/**
+ * VideoTestimonial Schema
+ * Supports MongoDB GridFS raw binary video storage, MongoDB binary thumbnail storage,
+ * and external video links (YouTube/Vimeo).
+ */
 const videoTestimonialSchema = new mongoose.Schema(
   {
     studentName: {
@@ -9,7 +14,6 @@ const videoTestimonialSchema = new mongoose.Schema(
     },
     designation: {
       type: String,
-      required: false,
       default: '',
       trim: true
     },
@@ -22,16 +26,41 @@ const videoTestimonialSchema = new mongoose.Schema(
       type: String,
       enum: ['upload', 'external'],
       required: true,
-      default: 'external'
+      default: 'upload'
     },
+    // GridFS File reference for uploaded video in MongoDB
+    videoFileId: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null,
+      index: true
+    },
+    videoMimeType: {
+      type: String,
+      default: 'video/mp4'
+    },
+    videoSize: {
+      type: Number,
+      default: 0
+    },
+    // External link or virtual/generated streaming endpoint
     videoUrl: {
       type: String,
-      required: [true, 'Please provide video URL or uploaded file reference'],
+      default: '',
       trim: true
+    },
+    // Binary thumbnail stored directly in MongoDB document (or external/gridfs URL)
+    thumbnailData: {
+      type: Buffer,
+      default: null
+    },
+    thumbnailMimeType: {
+      type: String,
+      default: ''
     },
     thumbnailUrl: {
       type: String,
-      default: ''
+      default: '',
+      trim: true
     },
     duration: {
       type: Number, // in seconds
@@ -64,4 +93,3 @@ const videoTestimonialSchema = new mongoose.Schema(
 videoTestimonialSchema.index({ status: 1, displayOrder: 1, createdAt: -1 });
 
 module.exports = mongoose.model('VideoTestimonial', videoTestimonialSchema);
-

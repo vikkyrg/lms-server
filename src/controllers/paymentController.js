@@ -43,6 +43,9 @@ const activateEnrollment = async (payment) => {
       enrollment.enrolledAt = new Date();
       enrollment.accessStartDate = null;
       enrollment.accessExpiryDate = null;
+      // Re-entering the approval queue counts as a fresh, unread notification.
+      enrollment.notificationViewed = false;
+      enrollment.notificationViewedAt = null;
       changed = true;
     } else if (!enrollment.payment) {
       // Always link the verified payment record so Admin review can see it.

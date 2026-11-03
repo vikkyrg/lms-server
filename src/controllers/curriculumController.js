@@ -206,6 +206,8 @@ exports.deleteLessonVideo = async (req, res, next) => {
   }
 };
 
+const { canAccessLesson } = require('../utils/lessonAccess');
+
 exports.streamLessonVideo = async (req, res, next) => {
   try {
     const { courseId, lessonId } = req.params;
@@ -216,11 +218,14 @@ exports.streamLessonVideo = async (req, res, next) => {
     const lesson = await Lesson.findOne({ _id: lessonId, courseId }).select('courseId moduleId video');
     if (!lesson) return res.status(404).json({ success: false, message: 'Lesson not found for this course' });
 
-    if (req.user.role !== 'admin') {
-      const enrollment = await Enrollment.findOne({ student: req.user.id, course: courseId });
-      if (!isEnrollmentActive(enrollment)) {
-        return res.status(403).json({ success: false, message: 'Active course enrollment is required to watch this video' });
-      }
+    // Validate access using centralized canAccessLesson (supports free preview for 1st 2 videos without login)
+    const access = await canAccessLesson(req.user, courseId, lesson);
+    if (!access.allowed) {
+      return res.status(403).json({
+        success: false,
+        code: access.reason || 'PURCHASE_REQUIRED',
+        message: 'This video is locked. Please purchase or enroll in the course to continue watching.'
+      });
     }
 
     const fileId = lesson.video?.fileId;
