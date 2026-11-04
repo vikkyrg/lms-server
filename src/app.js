@@ -50,14 +50,13 @@ connectDB();
 app.use(helmet({
   crossOriginResourcePolicy: false,
 }));
-const allowedOrigins = [process.env.CLIENT_URL, process.env.ADMIN_URL].filter(Boolean);
-if (process.env.NODE_ENV !== 'production') {
-  allowedOrigins.push('http://localhost:5173', 'http://localhost:5174');
-}
+
+// Allow all origins unconditionally (no origin restrictions or blocking)
 app.use(cors({
-  origin: allowedOrigins,
+  origin: true,
   credentials: true
 }));
+app.options('*', cors());
 app.use('/api/v1/payments/webhook', express.raw({ type: 'application/json', limit: '1mb' }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
