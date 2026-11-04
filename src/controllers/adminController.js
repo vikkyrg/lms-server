@@ -66,7 +66,7 @@ exports.getDashboardStats = async (req, res, next) => {
 // Student Directory management (exclusively role: 'student')
 exports.getUsers = async (req, res, next) => {
   try {
-    const { status, search } = req.query;
+    const { status, search, courseId, sort, startDate, endDate } = req.query;
     const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
     const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 20));
 
@@ -80,38 +80,155 @@ exports.getUsers = async (req, res, next) => {
     }
 
     if (search) {
-      const searchRegex = new RegExp(escapeRegex(search), 'i');
+      const searchRegex = new RegExp(escapeRegex(search.trim()), 'i');
       query.$or = [
         { name: searchRegex },
-        { email: searchRegex }
+        { email: searchRegex },
+        { phone: searchRegex }
       ];
+    }
+
+    if (startDate || endDate) {
+      query.createdAt = {};
+      if (startDate) {
+        const start = new Date(startDate);
+        if (!isNaN(start.getTime())) {
+          start.setHours(0, 0, 0, 0);
+          query.createdAt.$gte = start;
+        }
+      }
+      if (endDate) {
+        const end = new Date(endDate);
+        if (!isNaN(end.getTime())) {
+          end.setHours(23, 59, 59, 999);
+          query.createdAt.$lte = end;
+        }
+      }
+      if (Object.keys(query.createdAt).length === 0) {
+        delete query.createdAt;
+      }
+    }
+
+    // Filter by enrolled course if courseId is passed
+    if (courseId && require('mongoose').isValidObjectId(courseId)) {
+      const enrolledStudentIds = await Enrollment.distinct('student', {
+        course: courseId,
+        status: { $in: ['approved', 'completed', 'pending_approval'] }
+      });
+      query._id = { $in: enrolledStudentIds };
+    }
+
+    // Calculate real stats for student summary cards
+    const [totalStudents, activeStudents, inactiveStudents, enrolledStudentsCount] = await Promise.all([
+      User.countDocuments({ role: 'student' }),
+      User.countDocuments({ role: 'student', isActive: true }),
+      User.countDocuments({ role: 'student', isActive: false }),
+      Enrollment.distinct('student', { status: { $in: ['approved', 'completed', 'pending_approval'] } })
+        .then(ids => ids.length)
+    ]);
+
+    const stats = {
+      totalStudents,
+      activeStudents,
+      inactiveStudents,
+      enrolledStudents: enrolledStudentsCount
+    };
+
+    // Determine sort
+    let sortOption = { createdAt: -1 };
+    if (sort === 'oldest') {
+      sortOption = { createdAt: 1 };
+    } else if (sort === 'name_asc') {
+      sortOption = { name: 1 };
+    } else if (sort === 'name_desc') {
+      sortOption = { name: -1 };
     }
 
     const skip = (page - 1) * limit;
     const rawStudents = await User.find(query)
       .select('-password')
-      .sort('-createdAt')
+      .sort(sortOption)
       .skip(skip)
       .limit(Number(limit))
       .lean();
 
     const total = await User.countDocuments(query);
 
-    // Aggregate enrollment counts for these students
+    // Fetch enrollments with course details and payments for these students
     const studentIds = rawStudents.map(s => s._id);
-    const enrollmentCounts = await Enrollment.aggregate([
-      { $match: { student: { $in: studentIds } } },
-      { $group: { _id: '$student', count: { $sum: 1 } } }
+    const [enrollmentsList, paymentsList] = await Promise.all([
+      Enrollment.find({ student: { $in: studentIds } })
+        .populate('course', 'title slug price discountPrice isFree')
+        .lean(),
+      Payment.find({ student: { $in: studentIds } })
+        .select('student amount status createdAt')
+        .lean()
     ]);
-    const enrollmentCountMap = new Map(enrollmentCounts.map(item => [item._id.toString(), item.count]));
 
-    const users = rawStudents.map(s => ({
-      ...s,
-      enrolledCoursesCount: enrollmentCountMap.get(s._id.toString()) || 0
-    }));
+    // Map enrollments by student
+    const enrollmentsByStudent = new Map();
+    enrollmentsList.forEach((enr) => {
+      const sId = enr.student.toString();
+      if (!enrollmentsByStudent.has(sId)) {
+        enrollmentsByStudent.set(sId, []);
+      }
+      enrollmentsByStudent.get(sId).push(enr);
+    });
+
+    // Map payments by student
+    const paymentsByStudent = new Map();
+    paymentsList.forEach((p) => {
+      const sId = p.student.toString();
+      if (!paymentsByStudent.has(sId)) {
+        paymentsByStudent.set(sId, []);
+      }
+      paymentsByStudent.get(sId).push(p);
+    });
+
+    const users = rawStudents.map(s => {
+      const sId = s._id.toString();
+      const studentEnrollments = enrollmentsByStudent.get(sId) || [];
+      const studentPayments = paymentsByStudent.get(sId) || [];
+
+      // Determine consolidated payment status
+      // Paid / Partial / Pending / Free / None
+      let paymentStatus = 'none';
+      if (studentEnrollments.length > 0) {
+        const hasVerifiedOrCompleted = studentPayments.some(p => p.status === 'verified' || p.status === 'completed') ||
+          studentEnrollments.some(e => e.paymentStatus === 'verified' || e.paymentStatus === 'completed');
+        const hasPendingVerification = studentPayments.some(p => p.status === 'pending_verification' || p.status === 'created') ||
+          studentEnrollments.some(e => e.paymentStatus === 'pending_verification');
+        const allFree = studentEnrollments.every(e => e.paymentStatus === 'free' || e.course?.isFree);
+
+        if (hasVerifiedOrCompleted) {
+          paymentStatus = 'paid';
+        } else if (hasPendingVerification) {
+          paymentStatus = 'pending';
+        } else if (allFree) {
+          paymentStatus = 'free';
+        } else {
+          paymentStatus = 'pending';
+        }
+      }
+
+      const enrolledCourses = studentEnrollments.map(e => ({
+        id: e.course?._id,
+        title: e.course?.title || 'Unknown Course',
+        status: e.status,
+        progress: e.progress || 0
+      }));
+
+      return {
+        ...s,
+        enrolledCoursesCount: studentEnrollments.length,
+        enrolledCourses,
+        paymentStatus
+      };
+    });
 
     res.status(200).json({
       success: true,
+      stats,
       users,
       pagination: {
         page,
@@ -141,34 +258,123 @@ exports.getStudentDetails = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Student account not found' });
     }
 
-    const [enrollments, certificates] = await Promise.all([
+    const [enrollments, certificates, payments, submissions] = await Promise.all([
       Enrollment.find({ student: student._id })
-        .populate('course', 'title thumbnail shortDescription duration slug price discountPrice isFree')
+        .populate('course', 'title thumbnail shortDescription duration slug price discountPrice isFree modules')
         .populate('payment', 'amount currency status orderId paymentId createdAt')
         .sort('-createdAt')
         .lean(),
       require('../models/Certificate').find({ studentId: student._id })
         .populate('courseId', 'title thumbnail')
         .sort('-issueDate')
+        .lean(),
+      Payment.find({ student: student._id })
+        .populate('course', 'title')
+        .sort('-createdAt')
+        .lean(),
+      require('../models/Submission').find({ studentId: student._id })
+        .populate('assignmentId', 'title isProject totalMarks passingMarks')
+        .populate('courseId', 'title')
+        .sort('-createdAt')
         .lean()
     ]);
+
+    // Calculate module/lesson details for learning progress tab
+    // Fetch all lessons count for the enrolled courses
+    const courseIds = enrollments.map(e => e.course?._id).filter(Boolean);
+    const [allModules, allLessons] = await Promise.all([
+      require('../models/Module').find({ courseId: { $in: courseIds } }).lean(),
+      require('../models/Lesson').find({ courseId: { $in: courseIds } }).select('_id title moduleId courseId duration').lean()
+    ]);
+
+    const modulesByCourse = new Map();
+    allModules.forEach(m => {
+      const cId = m.courseId.toString();
+      if (!modulesByCourse.has(cId)) modulesByCourse.set(cId, []);
+      modulesByCourse.get(cId).push(m);
+    });
+
+    const lessonsByCourse = new Map();
+    allLessons.forEach(l => {
+      const cId = l.courseId.toString();
+      if (!lessonsByCourse.has(cId)) lessonsByCourse.set(cId, []);
+      lessonsByCourse.get(cId).push(l);
+    });
+
+    const detailedEnrollments = enrollments.map(enr => {
+      const cId = enr.course?._id?.toString();
+      const courseLessons = (cId && lessonsByCourse.get(cId)) || [];
+      const courseModules = (cId && modulesByCourse.get(cId)) || [];
+      const totalLessonsCount = courseLessons.length;
+      const completedCount = (enr.completedLessons || []).length;
+      const pendingCount = Math.max(0, totalLessonsCount - completedCount);
+
+      return {
+        ...enr,
+        totalLessonsCount,
+        completedLessonsCount: completedCount,
+        pendingLessonsCount: pendingCount,
+        totalModulesCount: courseModules.length
+      };
+    });
 
     res.status(200).json({
       success: true,
       student,
-      enrollments,
-      certificates
+      enrollments: detailedEnrollments,
+      certificates,
+      payments,
+      submissions
     });
   } catch (error) {
     next(error);
   }
 };
 
+// @desc Update student account status or basic details (admin safe)
+// @route PUT /api/v1/admin/users/:id
 exports.updateUserStatus = async (req, res, next) => {
-  return res.status(403).json({
-    success: false,
-    message: 'Role modification and user deactivation through the Student Directory has been disabled for security.'
-  });
+  try {
+    if (!require('mongoose').isValidObjectId(req.params.id)) {
+      return res.status(400).json({ success: false, message: 'Invalid student id' });
+    }
+
+    const student = await User.findOne({ _id: req.params.id, role: 'student' });
+    if (!student) {
+      return res.status(404).json({ success: false, message: 'Student account not found' });
+    }
+
+    const { isActive, name, phone } = req.body || {};
+
+    if (isActive !== undefined) {
+      student.isActive = Boolean(isActive);
+    }
+    if (name && typeof name === 'string' && name.trim()) {
+      student.name = name.trim();
+    }
+    if (phone !== undefined && typeof phone === 'string') {
+      student.phone = phone.trim();
+    }
+
+    await student.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Student account updated successfully',
+      student: {
+        _id: student._id,
+        name: student.name,
+        email: student.email,
+        phone: student.phone,
+        isActive: student.isActive,
+        role: student.role,
+        createdAt: student.createdAt,
+        updatedAt: student.updatedAt
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
 };
 
 // Enquiries management
