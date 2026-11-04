@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const {
   enrollFree,
+  enrollPaid,
   getMyEnrollments,
   checkEnrollment,
   getClassroom,
@@ -16,6 +17,7 @@ const { protect, authorize } = require('../middleware/auth');
 
 // Student routes
 router.post('/free', protect, enrollFree);
+router.post('/paid', protect, enrollPaid);
 router.get('/my', protect, getMyEnrollments);
 router.get('/check/:courseId', protect, checkEnrollment);
 router.get('/classroom/:courseId', protect, getClassroom);

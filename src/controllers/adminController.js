@@ -334,18 +334,22 @@ exports.getAllPayments = async (req, res, next) => {
 const unreadEnrollmentFilter = { status: 'pending_approval', notificationViewed: { $ne: true } };
 // Unread enquiry notifications = freshly submitted, never-opened enquiries.
 const unreadEnquiryFilter = { status: 'unread' };
+// Unread course reviews = submitted student reviews awaiting admin review
+const unreadReviewFilter = { isRead: false, status: 'pending' };
 
 // @desc Get unread notification counts for the admin sidebar
 // @route GET /api/v1/admin/notifications/counts
 exports.getNotificationCounts = async (req, res, next) => {
   try {
-    const [enrollments, enquiries] = await Promise.all([
+    const Review = require('../models/Review');
+    const [enrollments, enquiries, reviews] = await Promise.all([
       Enrollment.countDocuments(unreadEnrollmentFilter),
-      Enquiry.countDocuments(unreadEnquiryFilter)
+      Enquiry.countDocuments(unreadEnquiryFilter),
+      Review.countDocuments(unreadReviewFilter)
     ]);
     res.status(200).json({
       success: true,
-      counts: { enrollments, enquiries }
+      counts: { enrollments, enquiries, reviews }
     });
   } catch (error) {
     next(error);

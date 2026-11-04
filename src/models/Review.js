@@ -3,11 +3,9 @@ const mongoose = require('mongoose');
 /**
  * Course Review Schema
  * Supports course-specific text-based and video-based reviews.
- * Includes MongoDB GridFS video references, binary thumbnails, external video URLs,
- * reviewer name, designation/role, avatar, star rating, headline, content,
- * reviewDate, publication status (draft/published/archived/active/inactive), and displayOrder.
- * Aliased to support both reviewerName/studentName, reviewerDesignation/designation,
- * headline/title, and content/comment seamlessly.
+ * Includes studentId, courseId, studentName, studentEmail, rating (1-5),
+ * title/headline, comment/content, status (pending/published/rejected),
+ * isRead (for admin notifications badge), reviewDate, and timestamps.
  */
 const reviewSchema = new mongoose.Schema(
   {
@@ -17,11 +15,17 @@ const reviewSchema = new mongoose.Schema(
       required: [true, 'Please provide course ID'],
       index: true
     },
-    // Optional reference if created by an enrolled student
+    // Reference if submitted by an enrolled student
     studentId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
-      default: null
+      default: null,
+      index: true
+    },
+    studentEmail: {
+      type: String,
+      trim: true,
+      default: ''
     },
     // Review classification: 'text' or 'video'
     reviewType: {
@@ -126,10 +130,17 @@ const reviewSchema = new mongoose.Schema(
       type: Number,
       default: 0
     },
+    // Status workflow: 'pending', 'published', 'rejected', 'archived', 'draft'
     status: {
       type: String,
-      enum: ['draft', 'published', 'archived', 'active', 'inactive'],
-      default: 'published',
+      enum: ['pending', 'published', 'rejected', 'archived', 'draft', 'active', 'inactive'],
+      default: 'pending',
+      index: true
+    },
+    // WhatsApp-style notification tracking for newly submitted reviews
+    isRead: {
+      type: Boolean,
+      default: false,
       index: true
     },
     displayOrder: {
@@ -144,19 +155,19 @@ const reviewSchema = new mongoose.Schema(
   }
 );
 
-// Pre-validate hook to guarantee both naming conventions (reviewerName/studentName, content/comment, etc.)
+// Pre-validate hook to guarantee both naming conventions (reviewerName/studentName, content/comment, title/headline, etc.)
 // are synchronized and populated before saving to MongoDB
 reviewSchema.pre('validate', function (next) {
   const name = (this.reviewerName || this.studentName || '').trim();
   if (!name) {
-    return next(new Error('Please provide reviewer name'));
+    return next(new Error('Please provide reviewer / student name'));
   }
   this.reviewerName = name;
   this.studentName = name;
 
   const body = (this.content || this.comment || '').trim();
   if (!body) {
-    return next(new Error('Please provide review content or description'));
+    return next(new Error('Please provide review message or description'));
   }
   this.content = body;
   this.comment = body;
@@ -177,7 +188,7 @@ reviewSchema.pre('validate', function (next) {
   this.videoThumbnail = thumb;
   this.thumbnailUrl = thumb;
 
-  // Normalize status for compatibility
+  // Normalize status synonyms
   if (this.status === 'active') this.status = 'published';
   if (this.status === 'inactive') this.status = 'draft';
 
@@ -185,5 +196,6 @@ reviewSchema.pre('validate', function (next) {
 });
 
 reviewSchema.index({ courseId: 1, status: 1, displayOrder: 1, createdAt: -1 });
+reviewSchema.index({ status: 1, isRead: 1 });
 
 module.exports = mongoose.model('Review', reviewSchema);

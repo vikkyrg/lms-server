@@ -8,11 +8,14 @@ const {
   getReviewById,
   createReview,
   updateReview,
+  updateReviewStatus,
   deleteReview,
   streamVideo,
-  getThumbnail
+  getThumbnail,
+  checkReviewEligibility,
+  markReviewsRead
 } = require('../controllers/reviewController');
-const { protect, authorize, optionalAuth } = require('../middleware/auth');
+const { protect, authorize } = require('../middleware/auth');
 
 // Multer temporary storage for video, thumbnail, and avatar
 const upload = multer({
@@ -51,13 +54,21 @@ router.get('/:courseId/reviews', getCourseReviews);
 router.get('/:id/stream', streamVideo);
 router.get('/:id/thumbnail', getThumbnail);
 
+// Check if logged in student is eligible to review course
+router.get('/check-eligibility/:courseId', protect, checkReviewEligibility);
+
 // Admin endpoints
 router.get('/admin', protect, authorize('admin'), getAdminReviews);
 router.get('/admin/:id', protect, authorize('admin'), getReviewById);
-// Create review endpoints (requires valid login for students/users, admin also allowed)
+router.post('/admin/mark-read', protect, authorize('admin'), markReviewsRead);
+router.patch('/:id/status', protect, authorize('admin'), updateReviewStatus);
+
+// Create review endpoints (Student submits as pending; Admin can create directly)
 router.post('/course/:courseId', protect, uploadFields, createReview);
 router.post('/:courseId/reviews', protect, uploadFields, createReview);
 router.post('/', protect, uploadFields, createReview);
+
+// Edit & delete review endpoints
 router.put('/:id', protect, authorize('admin'), uploadFields, updateReview);
 router.delete('/:id', protect, authorize('admin'), deleteReview);
 

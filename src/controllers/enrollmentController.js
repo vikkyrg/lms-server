@@ -22,7 +22,7 @@ const refreshEnrollmentStatus = async (enrollment) => {
   return enrollment;
 };
 
-// @desc Request course enrollment (awaiting Admin approval)
+// @desc Request free course enrollment (awaiting Admin approval)
 // @route POST /api/v1/enrollments/free
 exports.enrollFree = async (req, res, next) => {
   try {
@@ -55,11 +55,12 @@ exports.enrollFree = async (req, res, next) => {
     let enrollment = existing;
     if (enrollment) {
       enrollment.status = 'pending_approval';
+      enrollment.coursePrice = 0;
+      enrollment.paymentStatus = 'free';
       enrollment.enrolledAt = new Date();
       enrollment.accessStartDate = null;
       enrollment.accessExpiryDate = null;
       enrollment.rejectionReason = '';
-      // Re-entering the approval queue counts as a fresh, unread notification.
       enrollment.notificationViewed = false;
       enrollment.notificationViewedAt = null;
       await enrollment.save();
@@ -67,7 +68,9 @@ exports.enrollFree = async (req, res, next) => {
       enrollment = await Enrollment.create({
         student: studentId,
         course: courseId,
-        status: 'pending_approval'
+        status: 'pending_approval',
+        coursePrice: 0,
+        paymentStatus: 'free'
       });
       await Course.findByIdAndUpdate(courseId, { $inc: { enrollmentCount: 1 } });
     }
@@ -77,6 +80,118 @@ exports.enrollFree = async (req, res, next) => {
       message: 'Your enrollment request has been submitted and is awaiting Admin approval.',
       status: 'pending_approval',
       enrollment
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc Request paid course enrollment (Payment: pending_verification, Enrollment: pending_approval)
+// @route POST /api/v1/enrollments/paid
+exports.enrollPaid = async (req, res, next) => {
+  try {
+    const { courseId, transactionReference } = req.body;
+    const studentId = req.user.id;
+
+    if (!mongoose.isValidObjectId(courseId)) {
+      return res.status(400).json({ success: false, message: 'Invalid course ID' });
+    }
+
+    const course = await Course.findById(courseId);
+    if (!course) {
+      return res.status(404).json({ success: false, message: 'Course not found' });
+    }
+
+    if (course.status !== 'published') {
+      return res.status(400).json({ success: false, message: 'Cannot enroll in an unpublished course' });
+    }
+
+    // Determine accurate course price (discountPrice or price)
+    const effectivePrice = Number(course.discountPrice !== undefined && course.discountPrice !== null && course.discountPrice !== ''
+      ? course.discountPrice
+      : (course.price || 0));
+
+    // Check existing enrollment
+    const existing = await Enrollment.findOne({ student: studentId, course: courseId }).populate('payment');
+    if (existing) {
+      if (['approved', 'completed'].includes(existing.status) && isEnrollmentActive(existing)) {
+        return res.status(400).json({ success: false, message: 'You already have active access to this course' });
+      }
+      if (existing.status === 'pending_approval' || existing.status === 'pending') {
+        return res.status(400).json({
+          success: false,
+          message: 'Your enrollment request for this course has already been submitted and is awaiting payment verification.'
+        });
+      }
+    }
+
+    // Generate clean unique internal order identifier
+    const orderId = `MANUAL_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
+
+    // Create or locate Payment record in pending_verification status
+    let payment = null;
+    if (existing && existing.payment) {
+      payment = await Payment.findById(existing.payment._id || existing.payment);
+      if (payment) {
+        payment.amount = effectivePrice;
+        payment.status = 'pending_verification';
+        payment.paymentMethod = 'Manual / External';
+        payment.transactionReference = transactionReference || '';
+        await payment.save();
+      }
+    }
+
+    if (!payment) {
+      payment = await Payment.create({
+        student: studentId,
+        course: courseId,
+        amount: effectivePrice,
+        currency: 'INR',
+        orderId,
+        paymentId: transactionReference || `TXN_${Date.now()}`,
+        status: 'pending_verification',
+        paymentMethod: 'Manual / External',
+        transactionReference: transactionReference || ''
+      });
+    }
+
+    let enrollment = existing;
+    if (enrollment) {
+      enrollment.status = 'pending_approval';
+      enrollment.coursePrice = effectivePrice;
+      enrollment.payment = payment._id;
+      enrollment.paymentStatus = 'pending_verification';
+      enrollment.transactionReference = transactionReference || '';
+      enrollment.enrolledAt = new Date();
+      enrollment.accessStartDate = null;
+      enrollment.accessExpiryDate = null;
+      enrollment.rejectionReason = '';
+      enrollment.notificationViewed = false;
+      enrollment.notificationViewedAt = null;
+      await enrollment.save();
+    } else {
+      enrollment = await Enrollment.create({
+        student: studentId,
+        course: courseId,
+        status: 'pending_approval',
+        coursePrice: effectivePrice,
+        payment: payment._id,
+        paymentStatus: 'pending_verification',
+        transactionReference: transactionReference || ''
+      });
+      await Course.findByIdAndUpdate(courseId, { $inc: { enrollmentCount: 1 } });
+    }
+
+    const populatedEnrollment = await Enrollment.findById(enrollment._id)
+      .populate('course', 'title price discountPrice thumbnail isFree')
+      .populate('payment', 'amount currency status orderId paymentId transactionReference createdAt');
+
+    res.status(201).json({
+      success: true,
+      message: 'Your enrollment request for this course has been submitted successfully. Our admin team will verify your payment and approve your enrollment.',
+      status: 'pending_approval',
+      paymentStatus: 'pending_verification',
+      enrollment: populatedEnrollment
     });
   } catch (error) {
     next(error);
@@ -467,11 +582,12 @@ exports.getAdminEnrollments = async (req, res, next) => {
   }
 };
 
-// @desc Approve student enrollment and grant 3 calendar months access (Admin)
+// @desc Approve student enrollment, verify external payment, and grant 3 calendar months access (Admin)
 // @route PUT /api/v1/enrollments/admin/:id/approve
 exports.approveEnrollment = async (req, res, next) => {
   try {
     const { id } = req.params;
+    const { transactionReference, paymentVerified } = req.body;
 
     if (!mongoose.isValidObjectId(id)) {
       return res.status(400).json({ success: false, message: 'Invalid enrollment ID' });
@@ -479,26 +595,69 @@ exports.approveEnrollment = async (req, res, next) => {
 
     const enrollment = await Enrollment.findById(id)
       .populate('student', 'name email phone')
-      .populate('course', 'title price isFree')
+      .populate('course', 'title price discountPrice isFree')
       .populate('payment');
 
     if (!enrollment) {
       return res.status(404).json({ success: false, message: 'Enrollment not found' });
     }
 
-    // Safety guard: a paid course may only be approved once the Razorpay
-    // payment linked to this enrollment is verified as captured by the backend.
-    // Free courses never require a payment record.
+    if (enrollment.status === 'approved' && isEnrollmentActive(enrollment)) {
+      return res.status(400).json({
+        success: false,
+        message: 'This enrollment is already approved and has active course access.'
+      });
+    }
+
     const isPaidCourse = !!enrollment.course
       && !enrollment.course.isFree
       && Number(enrollment.course.price || 0) > 0;
-    if (isPaidCourse && enrollment.payment) {
-      if (enrollment.payment.status !== 'completed') {
-        return res.status(400).json({
-          success: false,
-          message: `Cannot approve enrollment with payment status '${enrollment.payment.status}'. Access requires a verified payment.`
-        });
+
+    // Handle payment verification for paid courses
+    if (isPaidCourse) {
+      let paymentRecord = null;
+      if (enrollment.payment) {
+        paymentRecord = await Payment.findById(enrollment.payment._id || enrollment.payment);
       }
+
+      const effectivePrice = Number(enrollment.course.discountPrice !== undefined && enrollment.course.discountPrice !== null && enrollment.course.discountPrice !== ''
+        ? enrollment.course.discountPrice
+        : enrollment.course.price);
+
+      if (!paymentRecord) {
+        // Create manual payment record verified by admin
+        paymentRecord = await Payment.create({
+          student: enrollment.student._id || enrollment.student,
+          course: enrollment.course._id || enrollment.course,
+          amount: enrollment.coursePrice || effectivePrice,
+          currency: 'INR',
+          orderId: `MANUAL_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`,
+          paymentId: transactionReference || enrollment.transactionReference || `ADMIN_VERIFIED_${Date.now()}`,
+          status: 'verified',
+          paymentMethod: 'Manual / External',
+          transactionReference: transactionReference || enrollment.transactionReference || '',
+          verifiedAt: new Date(),
+          verifiedBy: req.user.id
+        });
+        enrollment.payment = paymentRecord._id;
+      } else {
+        paymentRecord.status = 'verified';
+        paymentRecord.paymentMethod = paymentRecord.paymentMethod || 'Manual / External';
+        if (transactionReference) {
+          paymentRecord.transactionReference = transactionReference;
+          paymentRecord.paymentId = transactionReference;
+        }
+        paymentRecord.verifiedAt = new Date();
+        paymentRecord.verifiedBy = req.user.id;
+        await paymentRecord.save();
+      }
+
+      enrollment.paymentStatus = 'verified';
+      if (transactionReference) {
+        enrollment.transactionReference = transactionReference;
+      }
+    } else {
+      enrollment.paymentStatus = 'free';
     }
 
     const startDate = new Date();
@@ -523,6 +682,8 @@ exports.approveEnrollment = async (req, res, next) => {
       details: {
         student: enrollment.student?.email,
         course: enrollment.course?.title,
+        paymentStatus: enrollment.paymentStatus,
+        transactionReference: enrollment.transactionReference,
         accessStartDate: startDate,
         accessExpiryDate: expiryDate
       }
@@ -535,18 +696,23 @@ exports.approveEnrollment = async (req, res, next) => {
         await sendEmail({
           to: enrollment.student.email,
           subject: `Enrollment Approved: ${enrollment.course?.title}`,
-          text: `Hello ${enrollment.student.name},\n\nYour course enrollment has been approved by the Admin! You now have active 3-month access.\n\nAccess starts: ${startDate.toDateString()}\nAccess expires: ${expiryDate.toDateString()}\n\nGo to your classroom: ${clientUrl}/student/courses/${enrollment.course?._id}\n\nAutoOps School Team`
+          text: `Hello ${enrollment.student.name},\n\nYour course enrollment and payment have been verified and approved by the Admin! You now have active 3-calendar-month course access.\n\nCourse: ${enrollment.course?.title}\nAccess starts: ${startDate.toDateString()}\nAccess expires: ${expiryDate.toDateString()}\n\nGo to your classroom: ${clientUrl}/student/courses/${enrollment.course?._id}\n\nAutoOps School Team`
         });
       }
     } catch (mailErr) {
       console.warn('Student approval notification non-blocking warning:', mailErr.message);
     }
 
+    const populated = await Enrollment.findById(enrollment._id)
+      .populate('student', 'name email phone')
+      .populate('course', 'title price discountPrice isFree thumbnail duration slug')
+      .populate('payment', 'amount currency status orderId paymentId transactionReference verifiedAt createdAt');
+
     res.status(200).json({
       success: true,
-      message: 'Enrollment approved. 3-calendar-month access has been activated.',
-      data: enrollment,
-      enrollment
+      message: 'Payment verified and enrollment approved. 3-calendar-month access has been activated.',
+      data: populated,
+      enrollment: populated
     });
   } catch (error) {
     next(error);

@@ -29,6 +29,21 @@ const enrollmentSchema = new mongoose.Schema({
     enum: ['pending_approval', 'approved', 'rejected', 'completed', 'expired'],
     default: 'pending_approval'
   },
+  // Paid course enrollment attributes
+  coursePrice: {
+    type: Number,
+    default: 0
+  },
+  paymentStatus: {
+    type: String,
+    enum: ['free', 'pending_verification', 'verified', 'completed', 'failed', 'refunded'],
+    default: 'free'
+  },
+  transactionReference: {
+    type: String,
+    default: '',
+    trim: true
+  },
   progress: {
     type: Number,
     default: 0 // percentage 0 - 100

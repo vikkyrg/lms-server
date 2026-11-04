@@ -224,20 +224,50 @@ function streamCertificatePdf(res, certificate) {
         .text(dateStr, leftColX, footerY + 58);
 
       // --- Right Column: Official Verification & Security Badge ---
-      const badgeWidth = 220;
-      const badgeHeight = 36;
+      const badgeWidth = 230;
+      const badgeHeight = 40;
       const badgeX = width - 48 - 18 - badgeWidth;
-      const badgeY = footerY + 18;
+      const badgeY = footerY + 16;
 
+      // Outer badge container (soft emerald green fill + border)
       doc.save();
-      doc.fillColor('#ECFDF5').roundedRect(badgeX, badgeY, badgeWidth, badgeHeight, 6).fill();
-      doc.lineWidth(0.8).strokeColor('#A7F3D0').roundedRect(badgeX, badgeY, badgeWidth, badgeHeight, 6).stroke();
+      doc.fillColor('#ECFDF5').roundedRect(badgeX, badgeY, badgeWidth, badgeHeight, 8).fill();
+      doc.lineWidth(1).strokeColor('#10B981').roundedRect(badgeX, badgeY, badgeWidth, badgeHeight, 8).stroke();
+
+      // Verified Shield / Check Icon vector drawing
+      const iconCenterX = badgeX + 22;
+      const iconCenterY = badgeY + 20;
+
+      // Shield outline
+      doc.lineWidth(1.6).strokeColor('#059669').fillColor('#D1FAE5');
+      // Draw shield path
+      doc.polygon(
+        [iconCenterX, iconCenterY - 10],
+        [iconCenterX + 9, iconCenterY - 6],
+        [iconCenterX + 9, iconCenterY + 1],
+        [iconCenterX, iconCenterY + 10],
+        [iconCenterX - 9, iconCenterY + 1],
+        [iconCenterX - 9, iconCenterY - 6]
+      ).fillAndStroke();
+
+      // Checkmark inside shield
+      doc.lineWidth(1.8).strokeColor('#047857');
+      doc.moveTo(iconCenterX - 4, iconCenterY)
+        .lineTo(iconCenterX - 1, iconCenterY + 3.5)
+        .lineTo(iconCenterX + 4.5, iconCenterY - 3)
+        .stroke();
+
       doc.restore();
 
-      doc.fillColor('#047857')
+      // Verification Badge Text: Exact match "Verified & Authenticated"
+      doc.fillColor('#065F46')
         .font('Helvetica-Bold')
-        .fontSize(10)
-        .text('● VERIFIED & AUTHENTICATED', badgeX, badgeY + 12, { width: badgeWidth, align: 'center', characterSpacing: 0.5 });
+        .fontSize(10.5)
+        .text('Verified & Authenticated', badgeX + 38, badgeY + 13, {
+          width: badgeWidth - 44,
+          align: 'left',
+          characterSpacing: 0.2
+        });
 
       doc.end();
     } catch (err) {

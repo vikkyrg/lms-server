@@ -32,12 +32,31 @@ const paymentSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['created', 'completed', 'failed', 'refunded', 'partially_refunded'],
-    default: 'created'
+    enum: [
+      'created',
+      'pending_verification',
+      'verified',
+      'completed',
+      'failed',
+      'refunded',
+      'partially_refunded'
+    ],
+    default: 'pending_verification'
   },
   paymentMethod: {
     type: String,
-    default: 'Razorpay'
+    default: 'Manual / External'
+  },
+  transactionReference: {
+    type: String,
+    default: ''
+  },
+  verifiedAt: {
+    type: Date
+  },
+  verifiedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
   },
   couponApplied: {
     type: String
