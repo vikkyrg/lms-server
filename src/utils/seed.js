@@ -15,13 +15,39 @@ const Assignment = require('../models/Assignment');
 
 const seedData = async () => {
   try {
+    const adminEmail = process.env.SEED_ADMIN_EMAIL?.trim().toLowerCase();
+    const adminPassword = process.env.SEED_ADMIN_PASSWORD;
+    const adminCredentialsProvided = Boolean(adminEmail || adminPassword);
+    if (adminCredentialsProvided && (!adminEmail || !adminPassword)) {
+      throw new Error('Set both SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD to provision the administrator.');
+    }
+
     await mongoose.connect(process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/lms_db');
     console.log('Connected to DB for seeding...');
 
     if (process.env.SEED_RESET !== 'true' && await User.exists({})) {
+      if (adminCredentialsProvided) {
+        let admin = await User.findOne({ role: 'admin' });
+        const conflictingUser = await User.findOne({ email: adminEmail });
+        if (conflictingUser && (!admin || !conflictingUser._id.equals(admin._id))) {
+          throw new Error('SEED_ADMIN_EMAIL is already assigned to a different account.');
+        }
+
+        if (!admin) {
+          admin = new User({ name: 'System Administrator', role: 'admin' });
+        }
+        admin.email = adminEmail;
+        admin.password = adminPassword;
+        await admin.save();
+        console.log('Updated administrator credentials from SEED_ADMIN_* environment variables.');
+      }
       console.log('Existing users found; seed skipped to preserve the database. Set SEED_RESET=true only for an intentional local reset.');
       await mongoose.disconnect();
       return;
+    }
+
+    if (!adminEmail || !adminPassword) {
+      throw new Error('Set SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD before seeding a database without users.');
     }
 
     if (process.env.SEED_RESET === 'true') {
@@ -41,8 +67,8 @@ const seedData = async () => {
     // 1. Create Users
     const admin = await User.create({
       name: 'System Administrator',
-      email: 'admin@lms.com',
-      password: 'admin123',
+      email: adminEmail,
+      password: adminPassword,
       role: 'admin',
       headline: 'Platform Master Architect',
       bio: 'Managing high-standard learning systems worldwide.'
@@ -57,7 +83,7 @@ const seedData = async () => {
       bio: 'Eager to build production-grade web applications.'
     });
 
-    console.log('Created seed users: admin@lms.com and student@lms.com (passwords: admin123, student123)');
+    console.log(`Created seed users: ${adminEmail} and student@lms.com`);
 
     // 2. Create Categories
     const catDev = await Category.create({

@@ -4,6 +4,7 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
+const mongoose = require('mongoose');
 require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 
 const connectDB = require('./config/db');
@@ -41,22 +42,43 @@ if (process.env.NODE_ENV === 'production') {
   if (missing.length) {
     throw new Error(`Missing required production environment variables: ${missing.join(', ')}`);
   }
+  if (process.env.JWT_SECRET.trim().length < 32) {
+    throw new Error('JWT_SECRET must be configured with at least 32 characters');
+  }
 }
 
-// Connect to MongoDB
-connectDB();
+const allowedOrigins = [process.env.CLIENT_URL, process.env.ADMIN_URL]
+  .flatMap(value => (value || '').split(','))
+  .map(value => value.trim())
+  .filter(Boolean)
+  .map((value) => {
+    try {
+      return new URL(value).origin;
+    } catch {
+      throw new Error(`Invalid CORS origin configured: ${value}`);
+    }
+  });
+
+if (process.env.NODE_ENV === 'production' && allowedOrigins.length === 0) {
+  throw new Error('Configure CLIENT_URL or ADMIN_URL with the production frontend origin.');
+}
 
 // Security and utility middleware
 app.use(helmet({
   crossOriginResourcePolicy: false,
 }));
 
-// Allow all origins unconditionally (no origin restrictions or blocking)
-app.use(cors({
-  origin: true,
+const corsOptions = {
+  origin(origin, callback) {
+    if (!origin || process.env.NODE_ENV !== 'production' || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error(`CORS origin is not allowed: ${origin}`));
+  },
   credentials: true
-}));
-app.options('*', cors());
+};
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use('/api/v1/payments/webhook', express.raw({ type: 'application/json', limit: '1mb' }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -78,7 +100,12 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Health check
 app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+  const databaseConnected = mongoose.connection.readyState === 1;
+  res.status(databaseConnected ? 200 : 503).json({
+    status: databaseConnected ? 'ok' : 'degraded',
+    database: databaseConnected ? 'connected' : 'disconnected',
+    timestamp: new Date().toISOString()
+  });
 });
 
 // API Routes
@@ -101,24 +128,44 @@ app.use('/api/v1/reviews', reviewRoutes);
 // Error Handler
 app.use(errorHandler);
 
-const PORT = process.env.PORT || 5000;
-const server = app.listen(PORT, () => {
-  console.log(`LMS Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
-});
+const PORT = Number(process.env.PORT || 5001);
+if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
+  throw new Error(`Invalid PORT value: ${process.env.PORT}`);
+}
 
-// Graceful shutdown — prevents node --watch / nodemon from crashing on EADDRINUSE or unhandled errors
-server.on('error', (err) => {
-  console.error('Server error:', err.message);
-  process.exit(1);
+let server;
+
+const startServer = async () => {
+  await connectDB();
+  server = app.listen(PORT, () => {
+    console.log(`LMS Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
+  });
+  server.on('error', (error) => {
+    console.error(`Server listen error on port ${PORT}: ${error.message}`);
+    process.exit(1);
+  });
+};
+
+const stopAfterFatalError = (label, error) => {
+  console.error(`${label}:`, error);
+  if (server?.listening) {
+    server.close(() => process.exit(1));
+  } else {
+    process.exit(1);
+  }
+};
+
+startServer().catch((error) => {
+  console.error('Backend startup failed; HTTP server was not started:', error.message);
+  process.exitCode = 1;
 });
 
 process.on('unhandledRejection', (reason) => {
-  console.error('Unhandled Rejection:', reason);
+  stopAfterFatalError('Unhandled Rejection', reason);
 });
 
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', err.message);
-  server.close(() => process.exit(1));
+process.on('uncaughtException', (error) => {
+  stopAfterFatalError('Uncaught Exception', error);
 });
 
 module.exports = app;

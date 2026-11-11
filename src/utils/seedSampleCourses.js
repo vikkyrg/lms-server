@@ -12,8 +12,8 @@
  *
  * Usage (server must be running):  npm run seed:sample-courses
  *   SEED_API_URL          default http://localhost:5001/api/v1
- *   SEED_ADMIN_EMAIL      default admin@lms.com   (local dev admin from npm run seed)
- *   SEED_ADMIN_PASSWORD   default admin123
+ *   SEED_ADMIN_EMAIL      administrator email configured in server/.env
+ *   SEED_ADMIN_PASSWORD   administrator password configured in server/.env
  *   SEED_FORCE=true       reset the two courses' curriculum/materials first
  */
 const fs = require('fs');
@@ -25,8 +25,8 @@ const PDFDocument = require('pdfkit');
 dotenv.config();
 
 const API_URL = process.env.SEED_API_URL || `http://localhost:${process.env.PORT || 5001}/api/v1`;
-const ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL || 'admin@lms.com';
-const ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD || 'admin123';
+const ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL;
+const ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD;
 const CATEGORY_NAME = 'DevOps';
 const FORCE = process.env.SEED_FORCE === 'true';
 
@@ -466,6 +466,10 @@ const createSampleCourse = async (course, categoryId, adminId) => {
 };
 
 const main = async () => {
+  if (!ADMIN_EMAIL || !ADMIN_PASSWORD) {
+    throw new Error('Set SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD in server/.env before running this script.');
+  }
+
   console.log(`--- AutoOps School · sample course creator ---`);
   console.log(`Admin API base: ${API_URL}`);
 
