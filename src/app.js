@@ -26,6 +26,7 @@ const faqRoutes = require('./routes/faqRoutes');
 const projectRoutes = require('./routes/projectRoutes');
 const roadmapRoutes = require('./routes/roadmapRoutes');
 const reviewRoutes = require('./routes/reviewRoutes');
+const websitePopupRoutes = require('./routes/websitePopupRoutes');
 
 const app = express();
 const authLimiter = rateLimit({
@@ -124,6 +125,7 @@ app.use('/api/v1/faqs', faqRoutes);
 app.use('/api/v1/projects', projectRoutes);
 app.use('/api/v1/roadmap', roadmapRoutes);
 app.use('/api/v1/reviews', reviewRoutes);
+app.use('/api/v1/website-popup', websitePopupRoutes);
 
 // Error Handler
 app.use(errorHandler);

@@ -36,9 +36,21 @@ const getYouTubeThumbnail = (url) => {
   return '';
 };
 
+const isSelfReferentialThumbnailUrl = (url, testimonialId) => {
+  if (!url) return false;
+  const expectedPath = `/api/v1/video-testimonials/${testimonialId}/thumbnail`;
+  try {
+    const parsedUrl = new URL(url.trim(), 'http://localhost');
+    return parsedUrl.pathname.replace(/\/+$/, '') === expectedPath;
+  } catch {
+    return url.trim().replace(/\/+$/, '') === expectedPath;
+  }
+};
+
 // Formats testimonial payload for client consumption
 const formatTestimonialResponse = (doc) => {
   const item = doc.toObject ? doc.toObject() : { ...doc };
+  const hasThumbnailData = Boolean(doc.thumbnailData?.length);
   // Remove binary buffer from general JSON response to save bandwidth
   delete item.thumbnailData;
 
@@ -49,9 +61,14 @@ const formatTestimonialResponse = (doc) => {
     item.videoUrl = `/api/v1/video-testimonials/${item._id}/video`;
   }
 
-  // Determine thumbnail URL
-  if (doc.thumbnailData || (doc.thumbnailMimeType && !item.thumbnailUrl)) {
-    item.thumbnailUrl = `/api/v1/video-testimonials/${item._id}/thumbnail`;
+  // Keep the API-generated thumbnail URL only when it has stored image data.
+  // Old records may contain their own endpoint as thumbnailUrl, which redirects
+  // back to itself when the binary image has been cleared.
+  const thumbnailPath = `/api/v1/video-testimonials/${item._id}/thumbnail`;
+  if (hasThumbnailData) {
+    item.thumbnailUrl = thumbnailPath;
+  } else if (isSelfReferentialThumbnailUrl(item.thumbnailUrl, item._id)) {
+    item.thumbnailUrl = '';
   }
 
   return item;
@@ -243,7 +260,7 @@ exports.getThumbnail = async (req, res, next) => {
       return res.send(video.thumbnailData);
     }
 
-    if (video.thumbnailUrl) {
+    if (video.thumbnailUrl && !isSelfReferentialThumbnailUrl(video.thumbnailUrl, video._id)) {
       return res.redirect(video.thumbnailUrl);
     }
 

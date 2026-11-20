@@ -4,8 +4,10 @@ const { getDashboardStats, getUsers, getStudentDetails, updateUserStatus, getEnq
 const { getAdminFaqs, getFaqById, createFaq, updateFaq, deleteFaq } = require('../controllers/faqController');
 const { getAdminProjects, getProjectById, createProject, updateProject, updateProjectStatus, deleteProject } = require('../controllers/projectController');
 const { protect, authorize } = require('../middleware/auth');
+const adminWebsitePopupRoutes = require('./adminWebsitePopupRoutes');
 
 router.post('/enquiry', createEnquiry);
+router.use('/website-popup', adminWebsitePopupRoutes);
 
 router.get('/stats', protect, authorize('admin'), getDashboardStats);
 router.get('/users', protect, authorize('admin'), getUsers);
