@@ -27,18 +27,20 @@ const seedData = async () => {
 
     if (process.env.SEED_RESET !== 'true' && await User.exists({})) {
       if (adminCredentialsProvided) {
-        let admin = await User.findOne({ role: 'admin' });
+        const adminWithConfiguredEmail = await User.findOne({ email: adminEmail, role: 'admin' });
         const conflictingUser = await User.findOne({ email: adminEmail });
-        if (conflictingUser && (!admin || !conflictingUser._id.equals(admin._id))) {
+        if (conflictingUser && (!adminWithConfiguredEmail || !conflictingUser._id.equals(adminWithConfiguredEmail._id))) {
           throw new Error('SEED_ADMIN_EMAIL is already assigned to a different account.');
         }
 
+        let admin = adminWithConfiguredEmail || await User.findOne({ role: 'admin' });
         if (!admin) {
           admin = new User({ name: 'System Administrator', role: 'admin' });
         }
         admin.email = adminEmail;
         admin.password = adminPassword;
         await admin.save();
+        await User.deleteMany({ role: 'admin', _id: { $ne: admin._id } });
         console.log('Updated administrator credentials from SEED_ADMIN_* environment variables.');
       }
       console.log('Existing users found; seed skipped to preserve the database. Set SEED_RESET=true only for an intentional local reset.');
